@@ -19,6 +19,9 @@ export interface MarketView {
   teamShareBps: number;
   /** RISE supply as tracked by the market (equals the mint supply). */
   supply: bigint;
+  /** Minimum trade in lamports (u64 @267 = 100000). Buy lamports_in below it, or a sell
+   * whose gross SOL is below it, fails with custom error 6401 (checked in LiteSVM). */
+  minTradeLamports: bigint;
   /** Floor/main cash ledger (lamports). A + B = vault wSOL balance. */
   reserveA: bigint;
   /** Price-reserve ledger (lamports). */
@@ -39,6 +42,7 @@ export function decodeMarket(data: Buffer): MarketView {
     creatorShareBps: data.readUInt16LE(261),
     teamShareBps: data.readUInt16LE(263),
     supply: data.readBigUInt64LE(421),
+    minTradeLamports: data.readBigUInt64LE(267),
     reserveA: data.readBigUInt64LE(429),
     reserveB: data.readBigUInt64LE(437),
     creatorFeesAccrued: data.readBigUInt64LE(469),

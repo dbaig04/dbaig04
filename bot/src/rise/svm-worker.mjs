@@ -62,6 +62,10 @@ function tokenAccount(mint, owner, amount, native, ext) {
 
 let svm = null;
 let program = null;
+let lastState = null;
+// litesvm 0.8.0 can abort (std::bad_alloc) on a call made some time AFTER a failed
+// simulation, so after any failure the LiteSVM instance is discarded and rebuilt.
+let dirty = false;
 let rent = { lpby: 5080n, thr: 1.0, burn: 50 };
 
 function fresh() {
@@ -110,6 +114,17 @@ function quote(kind, amount) {
   return { out: out.toString(), cu: Number(r.meta().computeUnitsConsumed()) };
 }
 
+function applyState(msg) {
+  if (msg.rent) rent = { lpby: BigInt(msg.rent.lpby), thr: msg.rent.thr, burn: msg.rent.burn };
+  svm.setRent(new Rent(rent.lpby, rent.thr, rent.burn));
+  for (const [addr, a] of Object.entries(msg.accounts)) {
+    if (!a) continue;
+    svm.setAccount(new PublicKey(addr), { lamports: a.lamports, data: Buffer.from(a.data, "base64"), owner: new PublicKey(a.owner), executable: !!a.executable, rentEpoch: 0 });
+  }
+  if (msg.slot) svm.warpToSlot(BigInt(msg.slot));
+  setUser();
+}
+
 function handle(msg) {
   switch (msg.op) {
     case "program":
@@ -119,19 +134,22 @@ function handle(msg) {
       return { ok: true };
     case "state": {
       if (!svm) return { ok: false, err: "no program" };
-      if (msg.rent) rent = { lpby: BigInt(msg.rent.lpby), thr: msg.rent.thr, burn: msg.rent.burn };
-      svm.setRent(new Rent(rent.lpby, rent.thr, rent.burn));
-      for (const [addr, a] of Object.entries(msg.accounts)) {
-        if (!a) continue;
-        svm.setAccount(new PublicKey(addr), { lamports: a.lamports, data: Buffer.from(a.data, "base64"), owner: new PublicKey(a.owner), executable: !!a.executable, rentEpoch: 0 });
-      }
-      if (msg.slot) svm.warpToSlot(BigInt(msg.slot));
-      setUser();
+      lastState = msg;
+      applyState(msg);
       return { ok: true };
     }
-    case "quote":
+    case "quote": {
       if (!svm) return { out: null, err: "no program" };
-      return quote(msg.kind, BigInt(msg.amount));
+      if (dirty) {
+        fresh();
+        setUser();
+        if (lastState) applyState(lastState);
+        dirty = false;
+      }
+      const q = quote(msg.kind, BigInt(msg.amount));
+      if (q.out === null) dirty = true;
+      return q;
+    }
     case "ping":
       return { ok: true };
     default:

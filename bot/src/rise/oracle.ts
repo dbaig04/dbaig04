@@ -55,10 +55,20 @@ export class SvmOracle {
   /** Exact program output for Buy(lamports) / Sell(rise), or null if the program rejects it. */
   quote(kind: "buy" | "sell", amount: bigint): { out: bigint | null; err?: string; cu?: number } {
     if (!this.ready) return { out: null, err: "oracle not ready" };
-    if (!this.child && !this.start()) return { out: null, err: "worker failed to start" };
-    const r = this.send({ op: "quote", kind, amount: amount.toString() });
+    let r = null;
+    // One retry: if the worker died (litesvm abort), respawn it and ask again.
+    for (let attempt = 0; attempt < 2 && !r; attempt++) {
+      if (!this.child && !this.start()) continue;
+      r = this.send({ op: "quote", kind, amount: amount.toString() });
+    }
     if (!r) return { out: null, err: "worker crashed" };
     return { out: r.out === null || r.out === undefined ? null : BigInt(r.out), err: r.err, cu: r.cu };
+  }
+
+  /** Start the worker now (spawn + program load take ~0.3-0.5 s) instead of on the first quote. */
+  warm(): boolean {
+    if (!this.ready) return false;
+    return this.child !== null || this.start();
   }
 
   close(): void {
@@ -71,7 +81,7 @@ export class SvmOracle {
     const req = path.join(this.dir, "req");
     const resp = path.join(this.dir, "resp");
     execFileSync("mkfifo", [req, resp]);
-    const child = spawn(process.execPath, [WORKER, req, resp], { stdio: ["ignore", "ignore", "inherit"] });
+    const child = spawn(process.execPath, [WORKER, req, resp], { stdio: ["ignore", "ignore", "ignore"] });
     child.on("exit", () => {
       if (this.child === child) this.crashes++;
     });

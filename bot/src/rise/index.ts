@@ -109,6 +109,7 @@ export class RiseNative implements RiseVenue {
       accounts[k.toBase58()] = a ? { lamports: a.lamports, owner: a.owner.toBase58(), data: Buffer.from(a.data).toString("base64"), executable: a.executable } : null;
     }
     this.oracle.setState({ slot, rent, accounts });
+    this.oracle.warm();
   }
 
   private refetchProgram(deploy: bigint): void {
@@ -130,6 +131,7 @@ export class RiseNative implements RiseVenue {
     if (!this.market) return null;
     // Avoid program-error paths we can predict (they are also where litesvm may abort).
     if (kind === "sell" && amount > this.market.supply) return null;
+    if (kind === "buy" && amount < this.market.minTradeLamports) return null;
     const key = kind + amount.toString();
     const hit = this.cache.get(key);
     if (hit !== undefined) return hit;

@@ -103,6 +103,8 @@ export class MeteoraDlmm implements DlmmVenue {
   binArrays = new Map<number, BinArrayState>();
   private wanted: PublicKey[] = [];
   private initializedIdx: number[] = [];
+  /** last raw bytes + decoded form per bin array index, to skip re-decoding unchanged arrays */
+  private rawCache = new Map<number, { raw: Buffer; ba: BinArrayState }>();
 
   constructor(opts: MeteoraDlmmOptions = {}) {
     this.opts = { binArrayWindow: 12, extraBinArrays: 1, hostFeeRebate: true, ...opts };
@@ -143,10 +145,17 @@ export class MeteoraDlmm implements DlmmVenue {
     for (const i of wantIdx) {
       const a = infos.get(binArrayPda(i).toBase58());
       if (!a) continue; // not in this snapshot (first tick) -> fetched next tick
+      const cached = this.rawCache.get(i);
+      if (cached && cached.raw.equals(a.data)) {
+        next.set(i, cached.ba);
+        continue;
+      }
       const ba = decodeBinArray(a.data);
       if (ba.index !== i || !ba.lbPair.equals(POOL)) throw new Error(`bin array ${i} mismatch`);
+      this.rawCache.set(i, { raw: Buffer.from(a.data), ba });
       next.set(i, ba);
     }
+    for (const k of this.rawCache.keys()) if (!next.has(k)) this.rawCache.delete(k);
     this.binArrays = next;
   }
 

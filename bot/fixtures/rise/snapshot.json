@@ -1,5 +1,5 @@
 {
- "slot": 468161457,
+ "slot": 468161606,
  "programDeploySlot": "468145973",
  "accounts": {
   "9akRrSgLmVgJayrdYPygwV4U3YXrAMud2fYS98QMjeRR": {
@@ -106,6 +106,21 @@
    "kind": "sell",
    "amount": "90276131404",
    "out": "55293504"
+  },
+  {
+   "kind": "sell*",
+   "amount": "15902855408089",
+   "out": "9751562499"
+  },
+  {
+   "kind": "sell*",
+   "amount": "79154089967850",
+   "out": "48757812499"
+  },
+  {
+   "kind": "sell*",
+   "amount": "234814452801356",
+   "out": "146273437499"
   }
  ]
 }

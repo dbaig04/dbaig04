@@ -291,6 +291,13 @@ async function main() {
           simFee: ev ? fmt(ev.fee) : "?",
           bins: ev ? `${ev.start}->${ev.end}` : "?",
           quoteEnd: q.end,
+          elapsedSinceLastSwap: simClock ? Number(simClock.unixTimestamp - venue.lbPair!.v.lastUpdateTimestamp) : null,
+          vaBranch: simClock
+            ? (() => {
+                const e = simClock.unixTimestamp - venue.lbPair!.v.lastUpdateTimestamp;
+                return e < BigInt(venue.lbPair!.s.filterPeriod) ? "filter(keep ref)" : e < BigInt(venue.lbPair!.s.decayPeriod) ? "decay(VR=VA*R)" : "reset(VR=0)";
+              })()
+            : null,
           clockDelta: simClock && savedClock ? Number(simClock.unixTimestamp - savedClock.unixTimestamp) : null,
           requoteChanged: q.out !== q0.out || q.netIn !== q0.netIn,
           match: simNetIn === q.netIn && simOut === q.out && (!ev || (ev.amountIn === q.inGross && ev.hostFee === q.hostFee)),
@@ -350,7 +357,7 @@ async function main() {
 
   const scored = rows.filter((r) => r.match !== undefined);
   console.log(`\nSUMMARY: ${scored.filter((r) => r.match).length}/${scored.length} scored cases match exactly; ${rows.length - scored.length} not scored`);
-  console.table(rows.map((r) => ({ side: r.side, mode: r.mode, amount: String(r.amount), qNetIn: r.quoteNetIn, sNetIn: r.simNetIn, qOut: r.quoteOut, sOut: r.simOut, bins: r.bins, match: r.match ?? r.note ?? r.simErr })));
+  console.table(rows.map((r) => ({ side: r.side, mode: r.mode, amount: String(r.amount), qNetIn: r.quoteNetIn, sNetIn: r.simNetIn, qOut: r.quoteOut, sOut: r.simOut, bins: r.bins, va: r.vaBranch, match: r.match ?? r.note ?? r.simErr })));
 
   if (writeFixtures && fixtureSnap) {
     mkdirSync("fixtures/meteora", { recursive: true });

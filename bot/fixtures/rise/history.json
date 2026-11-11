@@ -1,0 +1,1039 @@
+{
+"fees": [
+{
+"sig": "21Z1FdCTbnUceKzu",
+"kind": "buy",
+"amount": "523999059",
+"feeTotal": "6549989",
+"creator": "3274994",
+"team": "3274994",
+"curveIn": "517449071",
+"out": "858078326245"
+},
+{
+"sig": "23KNYZum2tDQc8pM",
+"kind": "buy",
+"amount": "116798147",
+"feeTotal": "1459977",
+"creator": "729988",
+"team": "729988",
+"curveIn": "115338171",
+"out": "191364424549"
+},
+{
+"sig": "23QRS8ByHNpeit9r",
+"kind": "sell",
+"amount": "389020822",
+"feeTotal": "4862761",
+"creator": "2431380",
+"team": "2431380",
+"userOut": "384158061",
+"riseIn": "664183124804"
+},
+{
+"sig": "24CPPFHMEnBqVG76",
+"kind": "sell",
+"amount": "503551662",
+"feeTotal": "6294396",
+"creator": "3147198",
+"team": "3147198",
+"userOut": "497257266",
+"riseIn": "857501250380"
+},
+{
+"sig": "25kc3YCJ5h7YgAu1",
+"kind": "sell",
+"amount": "2319167677",
+"feeTotal": "28989596",
+"creator": "14494798",
+"team": "14494798",
+"userOut": "2290178081",
+"riseIn": "3968073113964"
+},
+{
+"sig": "25vaM9QFAPMgdZ6G",
+"kind": "buy",
+"amount": "287299462",
+"feeTotal": "3591244",
+"creator": "1795622",
+"team": "1795622",
+"curveIn": "283708218",
+"out": "470577143102"
+},
+{
+"sig": "28ei9h8Zn9UpXK6f",
+"kind": "buy",
+"amount": "2347543069",
+"feeTotal": "29344289",
+"creator": "14672144",
+"team": "14672144",
+"curveIn": "2318198781",
+"out": "3886658266948"
+},
+{
+"sig": "2AJxzw3bNuicUDzE",
+"kind": "buy",
+"amount": "1303911707",
+"feeTotal": "16298897",
+"creator": "8149448",
+"team": "8149448",
+"curveIn": "1287612811",
+"out": "2201346980030"
+},
+{
+"sig": "2CFRVosDHNDpGKxu",
+"kind": "buy",
+"amount": "381329897",
+"feeTotal": "4766624",
+"creator": "2383312",
+"team": "2383312",
+"curveIn": "376563273",
+"out": "624383258789"
+},
+{
+"sig": "2EJetStLAYHWbbrU",
+"kind": "sell",
+"amount": "6204572763",
+"feeTotal": "77557160",
+"creator": "38778580",
+"team": "38778580",
+"userOut": "6127015603",
+"riseIn": "10315812145580"
+},
+{
+"sig": "2JFdZhMdDrzGq46Q",
+"kind": "sell",
+"amount": "753146340",
+"feeTotal": "9414330",
+"creator": "4707165",
+"team": "4707165",
+"userOut": "743732010",
+"riseIn": "1299408983219"
+},
+{
+"sig": "2JV8tt9aq3grEY9g",
+"kind": "buy",
+"amount": "45527107",
+"feeTotal": "569089",
+"creator": "284544",
+"team": "284544",
+"curveIn": "44958019",
+"out": "74595260662"
+},
+{
+"sig": "2PNeGdtrNmx8m3Ji",
+"kind": "sell",
+"amount": "499653183",
+"feeTotal": "6245665",
+"creator": "3122832",
+"team": "3122832",
+"userOut": "493407518",
+"riseIn": "862219517469"
+},
+{
+"sig": "2PVGkC4vZ1udzBE9",
+"kind": "sell",
+"amount": "616807193",
+"feeTotal": "7710090",
+"creator": "3855045",
+"team": "3855045",
+"userOut": "609097103",
+"riseIn": "1054449416570"
+},
+{
+"sig": "2S1ez6uv6gmSVT6p",
+"kind": "buy",
+"amount": "556632614",
+"feeTotal": "6957908",
+"creator": "3478954",
+"team": "3478954",
+"curveIn": "549674706",
+"out": "921898179514"
+},
+{
+"sig": "2SXKT3JWLNCvJx7T",
+"kind": "sell",
+"amount": "222068451",
+"feeTotal": "2775856",
+"creator": "1387928",
+"team": "1387928",
+"userOut": "219292595",
+"riseIn": "379118300576"
+},
+{
+"sig": "2TyyjbD8w7wZXZJv",
+"kind": "sell",
+"amount": "14845793",
+"feeTotal": "185573",
+"creator": "92786",
+"team": "92786",
+"userOut": "14660220",
+"riseIn": "24190600773"
+},
+{
+"sig": "2U6KDZuycetMKhoy",
+"kind": "buy",
+"amount": "303129548",
+"feeTotal": "3789120",
+"creator": "1894560",
+"team": "1894560",
+"curveIn": "299340428",
+"out": "496596398411"
+},
+{
+"sig": "2UiUf7PN7V25k67N",
+"kind": "sell",
+"amount": "5989984",
+"feeTotal": "74875",
+"creator": "37437",
+"team": "37437",
+"userOut": "5915109",
+"riseIn": "9780106036"
+},
+{
+"sig": "2Zv2KLEzae6RhfeK",
+"kind": "buy",
+"amount": "2992510922",
+"feeTotal": "37406387",
+"creator": "18703193",
+"team": "18703193",
+"curveIn": "2955104536",
+"out": "4818376765640"
+},
+{
+"sig": "2eq1RaMeFL3pQZQg",
+"kind": "sell",
+"amount": "6753419339",
+"feeTotal": "84417742",
+"creator": "42208871",
+"team": "42208871",
+"userOut": "6669001597",
+"riseIn": "11574236473493"
+},
+{
+"sig": "2h3ggo9E5m585MyR",
+"kind": "buy",
+"amount": "24557021458",
+"feeTotal": "306962769",
+"creator": "153481384",
+"team": "153481384",
+"curveIn": "24250058690",
+"out": "40911810661088"
+},
+{
+"sig": "2jGp1dyNYW4EPmXu",
+"kind": "buy",
+"amount": "161432575",
+"feeTotal": "2017908",
+"creator": "1008954",
+"team": "1008954",
+"curveIn": "159414667",
+"out": "263839980122"
+},
+{
+"sig": "2joBGJgvxGp8Xnww",
+"kind": "buy",
+"amount": "75420361",
+"feeTotal": "942755",
+"creator": "471377",
+"team": "471377",
+"curveIn": "74477607",
+"out": "123573012530"
+},
+{
+"sig": "2o8n3xsoK9em8inm",
+"kind": "buy",
+"amount": "271470854",
+"feeTotal": "3393386",
+"creator": "1696693",
+"team": "1696693",
+"curveIn": "268077468",
+"out": "444702197897"
+},
+{
+"sig": "2z2ohHwH5QtTbpWB",
+"kind": "buy",
+"amount": "161799252",
+"feeTotal": "2022491",
+"creator": "1011245",
+"team": "1011245",
+"curveIn": "159776762",
+"out": "265083338651"
+},
+{
+"sig": "31XkwnU66sRbtSLQ",
+"kind": "sell",
+"amount": "2586236432",
+"feeTotal": "32327956",
+"creator": "16163978",
+"team": "16163978",
+"userOut": "2553908476",
+"riseIn": "4398062362794"
+},
+{
+"sig": "31f3Z3EpajAJJRs4",
+"kind": "sell",
+"amount": "14891924",
+"feeTotal": "186150",
+"creator": "93075",
+"team": "93075",
+"userOut": "14705774",
+"riseIn": "24191137100"
+},
+{
+"sig": "35LryXpxmGy2G6NT",
+"kind": "buy",
+"amount": "2830470250",
+"feeTotal": "35380879",
+"creator": "17690439",
+"team": "17690439",
+"curveIn": "2795089372",
+"out": "4522785802788"
+},
+{
+"sig": "39rHygp84XLMXtwL",
+"kind": "sell",
+"amount": "987500003",
+"feeTotal": "12343751",
+"creator": "6171875",
+"team": "6171875",
+"userOut": "975156252",
+"riseIn": "1603959629184"
+},
+{
+"sig": "3ABot7WSACRFJmbB",
+"kind": "buy",
+"amount": "460370585",
+"feeTotal": "5754633",
+"creator": "2877316",
+"team": "2877316",
+"curveIn": "454615953",
+"out": "739026920556"
+},
+{
+"sig": "3M8qZY42do3Yvpdt",
+"kind": "sell",
+"amount": "109505873",
+"feeTotal": "1368824",
+"creator": "684412",
+"team": "684412",
+"userOut": "108137049",
+"riseIn": "186942378826"
+},
+{
+"sig": "3NzYcbcmR9shkWfM",
+"kind": "buy",
+"amount": "232035969",
+"feeTotal": "2900450",
+"creator": "1450225",
+"team": "1450225",
+"curveIn": "229135519",
+"out": "380005761414"
+},
+{
+"sig": "3RdZKCdd8dJ6TD6t",
+"kind": "buy",
+"amount": "16963508",
+"feeTotal": "212044",
+"creator": "106022",
+"team": "106022",
+"curveIn": "16751464",
+"out": "28634322099"
+},
+{
+"sig": "3ZTuZ5Qs6hauD8s1",
+"kind": "buy",
+"amount": "2845835691",
+"feeTotal": "35572947",
+"creator": "17786473",
+"team": "17786473",
+"curveIn": "2810262745",
+"out": "4643466544581"
+},
+{
+"sig": "3ZybHiD9qaYSgmEq",
+"kind": "sell",
+"amount": "8937336",
+"feeTotal": "111717",
+"creator": "55858",
+"team": "55858",
+"userOut": "8825619",
+"riseIn": "14560700801"
+},
+{
+"sig": "3eUat6BDoFiujR3Q",
+"kind": "sell",
+"amount": "1955249999",
+"feeTotal": "24440625",
+"creator": "12220312",
+"team": "12220312",
+"userOut": "1930809374",
+"riseIn": "3190229521356"
+},
+{
+"sig": "3ewtnriRVPYv2Ru4",
+"kind": "buy",
+"amount": "28357540",
+"feeTotal": "354470",
+"creator": "177235",
+"team": "177235",
+"curveIn": "28003070",
+"out": "46460770626"
+},
+{
+"sig": "3m1rv2EJbtyKnkD9",
+"kind": "buy",
+"amount": "423966934",
+"feeTotal": "5299587",
+"creator": "2649793",
+"team": "2649793",
+"curveIn": "418667348",
+"out": "681986500710"
+},
+{
+"sig": "3v66sj4chjF7CcBC",
+"kind": "sell",
+"amount": "987499999",
+"feeTotal": "12343750",
+"creator": "6171875",
+"team": "6171875",
+"userOut": "975156249",
+"riseIn": "1608280170452"
+},
+{
+"sig": "3yRQvFZB6MuBjwXJ",
+"kind": "buy",
+"amount": "2666511458",
+"feeTotal": "33331394",
+"creator": "16665697",
+"team": "16665697",
+"curveIn": "2633180064",
+"out": "4258117596352"
+},
+{
+"sig": "4HsbJjEjS3TwfeKF",
+"kind": "sell",
+"amount": "2976150928",
+"feeTotal": "37201887",
+"creator": "18600943",
+"team": "18600943",
+"userOut": "2938949041",
+"riseIn": "5053219340602"
+},
+{
+"sig": "4KjUjmDqKJyiFxpt",
+"kind": "sell",
+"amount": "10862500016",
+"feeTotal": "135781251",
+"creator": "67890625",
+"team": "67890625",
+"userOut": "10726718765",
+"riseIn": "17564460158194"
+},
+{
+"sig": "4Pbv79GHj2HpfgaG",
+"kind": "sell",
+"amount": "191460944",
+"feeTotal": "2393262",
+"creator": "1196631",
+"team": "1196631",
+"userOut": "189067682",
+"riseIn": "312659502655"
+},
+{
+"sig": "4QAwyaHWkqcajyE1",
+"kind": "buy",
+"amount": "2952693254",
+"feeTotal": "36908666",
+"creator": "18454333",
+"team": "18454333",
+"curveIn": "2915784588",
+"out": "4822389528074"
+},
+{
+"sig": "4TydiSNun7Rm3BQr",
+"kind": "sell",
+"amount": "131381647",
+"feeTotal": "1642271",
+"creator": "821135",
+"team": "821135",
+"userOut": "129739376",
+"riseIn": "226649077953"
+},
+{
+"sig": "4UDEp3L7nKVeTw67",
+"kind": "sell",
+"amount": "1466750366",
+"feeTotal": "18334380",
+"creator": "9167190",
+"team": "9167190",
+"userOut": "1448415986",
+"riseIn": "2493077699757"
+},
+{
+"sig": "4ZUR1vdzQG8mdySS",
+"kind": "buy",
+"amount": "2697013655",
+"feeTotal": "33712671",
+"creator": "16856335",
+"team": "16856335",
+"curveIn": "2663300985",
+"out": "4386333175330"
+},
+{
+"sig": "4ZiJ8YxwxA6UzZ2z",
+"kind": "buy",
+"amount": "58331532",
+"feeTotal": "729145",
+"creator": "364572",
+"team": "364572",
+"curveIn": "57602388",
+"out": "95234566515"
+},
+{
+"sig": "4cvFGeaCqXt4aZ7o",
+"kind": "buy",
+"amount": "633554227",
+"feeTotal": "7919428",
+"creator": "3959714",
+"team": "3959714",
+"curveIn": "625634799",
+"out": "1015707055782"
+},
+{
+"sig": "4eSnNgqqTBR5qwVj",
+"kind": "buy",
+"amount": "49379978",
+"feeTotal": "617250",
+"creator": "308625",
+"team": "308625",
+"curveIn": "48762728",
+"out": "80909012625"
+},
+{
+"sig": "4gcgnxbo8UbCegjM",
+"kind": "sell",
+"amount": "9776252",
+"feeTotal": "122204",
+"creator": "61102",
+"team": "61102",
+"userOut": "9654048",
+"riseIn": "15965151727"
+},
+{
+"sig": "4r1WFx26BDH55mLw",
+"kind": "buy",
+"amount": "2771236671",
+"feeTotal": "34640459",
+"creator": "17320229",
+"team": "17320229",
+"curveIn": "2736596213",
+"out": "4563616316334"
+},
+{
+"sig": "4ujSXDDUVmJ1ZY4R",
+"kind": "sell",
+"amount": "9776255",
+"feeTotal": "122204",
+"creator": "61102",
+"team": "61102",
+"userOut": "9654051",
+"riseIn": "15954781372"
+},
+{
+"sig": "51rAfPBim4g36ZZ5",
+"kind": "sell",
+"amount": "4477589868",
+"feeTotal": "55969874",
+"creator": "27984937",
+"team": "27984937",
+"userOut": "4421619994",
+"riseIn": "7697091659221"
+},
+{
+"sig": "53yo5himP7anu2dS",
+"kind": "sell",
+"amount": "154434408",
+"feeTotal": "1930431",
+"creator": "965215",
+"team": "965215",
+"userOut": "152503977",
+"riseIn": "263700715865"
+},
+{
+"sig": "56RKh3mEiyiULusP",
+"kind": "buy",
+"amount": "78602226",
+"feeTotal": "982528",
+"creator": "491264",
+"team": "491264",
+"curveIn": "77619698",
+"out": "128774104492"
+},
+{
+"sig": "56nRVmS5PKvDJf7j",
+"kind": "buy",
+"amount": "1275925301",
+"feeTotal": "15949067",
+"creator": "7974533",
+"team": "7974533",
+"curveIn": "1259976235",
+"out": "2153513467088"
+},
+{
+"sig": "57re3aWEKLDj6EQj",
+"kind": "buy",
+"amount": "12864785",
+"feeTotal": "160810",
+"creator": "80405",
+"team": "80405",
+"curveIn": "12703975",
+"out": "21305246213"
+},
+{
+"sig": "59WMzopdMMHJncYW",
+"kind": "buy",
+"amount": "11015195238",
+"feeTotal": "137689941",
+"creator": "68844970",
+"team": "68844970",
+"curveIn": "10877505298",
+"out": "18429157881612"
+},
+{
+"sig": "59YCEDVrLMQPRLye",
+"kind": "buy",
+"amount": "4862649297",
+"feeTotal": "60783117",
+"creator": "30391558",
+"team": "30391558",
+"curveIn": "4801866181",
+"out": "8058715535889"
+},
+{
+"sig": "5BVCM6cNhpcoGjDZ",
+"kind": "sell",
+"amount": "61156478",
+"feeTotal": "764456",
+"creator": "382228",
+"team": "382228",
+"userOut": "60392022",
+"riseIn": "99344904394"
+},
+{
+"sig": "5EJRVBdvjQcVyJ32",
+"kind": "buy",
+"amount": "31034620",
+"feeTotal": "387933",
+"creator": "193966",
+"team": "193966",
+"curveIn": "30646688",
+"out": "50758674829"
+},
+{
+"sig": "5GK97Ydyxm1uJSm1",
+"kind": "sell",
+"amount": "6827006859",
+"feeTotal": "85337586",
+"creator": "42668793",
+"team": "42668793",
+"userOut": "6741669273",
+"riseIn": "11679529431960"
+},
+{
+"sig": "5K9AyYKYb4Jmqm4m",
+"kind": "buy",
+"amount": "705069332",
+"feeTotal": "8813367",
+"creator": "4406683",
+"team": "4406683",
+"curveIn": "696255966",
+"out": "1152224964028"
+},
+{
+"sig": "5Q8WW4FGF7XgSMuN",
+"kind": "buy",
+"amount": "36195059",
+"feeTotal": "452439",
+"creator": "226219",
+"team": "226219",
+"curveIn": "35742621",
+"out": "58569768534"
+},
+{
+"sig": "5UQQjdnCxgh5yhR9",
+"kind": "buy",
+"amount": "22318505",
+"feeTotal": "278982",
+"creator": "139491",
+"team": "139491",
+"curveIn": "22039523",
+"out": "36566245936"
+},
+{
+"sig": "5YSiNtBvtmTBVcvV",
+"kind": "buy",
+"amount": "748240585",
+"feeTotal": "9353008",
+"creator": "4676504",
+"team": "4676504",
+"curveIn": "738887577",
+"out": "1222567830087"
+},
+{
+"sig": "5djbVaBVh3h43sA4",
+"kind": "sell",
+"amount": "222207987",
+"feeTotal": "2777600",
+"creator": "1388800",
+"team": "1388800",
+"userOut": "219430387",
+"riseIn": "379377044528"
+},
+{
+"sig": "5kw9dqoN81TpyiTy",
+"kind": "buy",
+"amount": "68154283048",
+"feeTotal": "851928539",
+"creator": "425964269",
+"team": "425964269",
+"curveIn": "67302354510",
+"out": "115117007355284"
+},
+{
+"sig": "5tCpa6hJNCyGaTu1",
+"kind": "buy",
+"amount": "2558434904",
+"feeTotal": "31980437",
+"creator": "15990218",
+"team": "15990218",
+"curveIn": "2526454468",
+"out": "4193272490904"
+},
+{
+"sig": "5wkrthfD2s2NW1dV",
+"kind": "sell",
+"amount": "53031555725",
+"feeTotal": "662894447",
+"creator": "331447223",
+"team": "331447223",
+"userOut": "52368661278",
+"riseIn": "89951483547147"
+},
+{
+"sig": "5xKx1NHutrKu8Msi",
+"kind": "sell",
+"amount": "503302618",
+"feeTotal": "6291283",
+"creator": "3145641",
+"team": "3145641",
+"userOut": "497011335",
+"riseIn": "861812335788"
+},
+{
+"sig": "5zL2ZhkaKT38avso",
+"kind": "sell",
+"amount": "222169192",
+"feeTotal": "2777115",
+"creator": "1388557",
+"team": "1388557",
+"userOut": "219392077",
+"riseIn": "379377000835"
+},
+{
+"sig": "5zyZ295TSqGaNrv3",
+"kind": "sell",
+"amount": "967753",
+"feeTotal": "12097",
+"creator": "6048",
+"team": "6048",
+"userOut": "955656",
+"riseIn": "1580396345"
+},
+{
+"sig": "BJeUZ2baM955Dm5J",
+"kind": "sell",
+"amount": "222222457",
+"feeTotal": "2777781",
+"creator": "1388890",
+"team": "1388890",
+"userOut": "219444676",
+"riseIn": "379376657343"
+},
+{
+"sig": "MSr2rkAxvm93uWEU",
+"kind": "buy",
+"amount": "232023389",
+"feeTotal": "2900293",
+"creator": "1450146",
+"team": "1450146",
+"curveIn": "229123097",
+"out": "380005806995"
+},
+{
+"sig": "PDxrikKmNyEoiXe2",
+"kind": "sell",
+"amount": "1956627478",
+"feeTotal": "24457844",
+"creator": "12228922",
+"team": "12228922",
+"userOut": "1932169634",
+"riseIn": "3324355562676"
+},
+{
+"sig": "R4LwomTuBPuDYrJd",
+"kind": "buy",
+"amount": "144648329",
+"feeTotal": "1808105",
+"creator": "904052",
+"team": "904052",
+"curveIn": "142840225",
+"out": "232185932335"
+},
+{
+"sig": "YWtrrReSrCXeTPg3",
+"kind": "buy",
+"amount": "2581114184",
+"feeTotal": "32263928",
+"creator": "16131964",
+"team": "16131964",
+"curveIn": "2548850256",
+"out": "4222831644369"
+},
+{
+"sig": "ZjBViQon7Z6G8xnG",
+"kind": "sell",
+"amount": "150615942235",
+"feeTotal": "1882699278",
+"creator": "941349639",
+"team": "941349639",
+"userOut": "148733242957",
+"riseIn": "250772118356804"
+},
+{
+"sig": "aMiADDxWKvsWs67Y",
+"kind": "sell",
+"amount": "148124995",
+"feeTotal": "1851563",
+"creator": "925781",
+"team": "925781",
+"userOut": "146273432",
+"riseIn": "239780422108"
+},
+{
+"sig": "juq9hMsLcGzw9MkV",
+"kind": "buy",
+"amount": "109502195",
+"feeTotal": "1368778",
+"creator": "684389",
+"team": "684389",
+"curveIn": "108133417",
+"out": "179348876045"
+},
+{
+"sig": "kR1KoqbWwaYqmXtW",
+"kind": "sell",
+"amount": "504054148",
+"feeTotal": "6300677",
+"creator": "3150338",
+"team": "3150338",
+"userOut": "497753471",
+"riseIn": "861812668367"
+},
+{
+"sig": "oS1kcvnjs3V3JmWn",
+"kind": "buy",
+"amount": "116763416",
+"feeTotal": "1459543",
+"creator": "729771",
+"team": "729771",
+"curveIn": "115303874",
+"out": "191263946004"
+},
+{
+"sig": "qkcesQD9uQLJ1jai",
+"kind": "sell",
+"amount": "5050089162",
+"feeTotal": "63126115",
+"creator": "31563057",
+"team": "31563057",
+"userOut": "4986963047",
+"riseIn": "8657600021257"
+},
+{
+"sig": "sdcrWEU2HTgXN7zC",
+"kind": "sell",
+"amount": "4894842178",
+"feeTotal": "61185528",
+"creator": "30592764",
+"team": "30592764",
+"userOut": "4833656650",
+"riseIn": "8302483093581"
+},
+{
+"sig": "vRjAqfpx3APhapqQ",
+"kind": "sell",
+"amount": "249294381",
+"feeTotal": "3116180",
+"creator": "1558090",
+"team": "1558090",
+"userOut": "246178201",
+"riseIn": "406171256233"
+},
+{
+"sig": "vYCQEYXJHW4ZYu3C",
+"kind": "sell",
+"amount": "6742704632",
+"feeTotal": "84283808",
+"creator": "42141904",
+"team": "42141904",
+"userOut": "6658420824",
+"riseIn": "11574964843891"
+},
+{
+"sig": "wEvmU3WRA4VE499S",
+"kind": "buy",
+"amount": "151758844",
+"feeTotal": "1896986",
+"creator": "948493",
+"team": "948493",
+"curveIn": "149861858",
+"out": "251181952305"
+},
+{
+"sig": "wieNQ4zEbMFpvvGd",
+"kind": "buy",
+"amount": "11896386912",
+"feeTotal": "148704837",
+"creator": "74352418",
+"team": "74352418",
+"curveIn": "11747682076",
+"out": "19277029311723"
+},
+{
+"sig": "y6JAgy7sFWTAH3C8",
+"kind": "buy",
+"amount": "95880458",
+"feeTotal": "1198506",
+"creator": "599253",
+"team": "599253",
+"curveIn": "94681952",
+"out": "157052771195"
+},
+{
+"sig": "ymM9KCM49XLiV1uK",
+"kind": "sell",
+"amount": "222185349",
+"feeTotal": "2777317",
+"creator": "1388658",
+"team": "1388658",
+"userOut": "219408032",
+"riseIn": "379369783755"
+}
+],
+"buyTx": {
+"sig": "21Z1FdCTbnUceKzuaCSVFwV5M5CqTexZ6YvawFYZ3uTxPdYuHbo8K6iKUqEmk4MWfzBj5RP8dJautTMe1gXsePxD",
+"user": "24Q5e2FRebiFs3iWvN6pZYA4UTGzA3WUsci4ChhgfYEU",
+"metas": [
+{
+"pubkey": "24Q5e2FRebiFs3iWvN6pZYA4UTGzA3WUsci4ChhgfYEU",
+"isSigner": true,
+"isWritable": true
+},
+{
+"pubkey": "9akRrSgLmVgJayrdYPygwV4U3YXrAMud2fYS98QMjeRR",
+"isSigner": false,
+"isWritable": true
+},
+{
+"pubkey": "8x2X6yCLHrU7MGHBYmnKPfqk8ZiaCrKN2xt6B8qMi2B2",
+"isSigner": false,
+"isWritable": true
+},
+{
+"pubkey": "GfeAL743ak18a5ifSqiKhFrHNWx2pXs9UsZPV6rrGeWf",
+"isSigner": false,
+"isWritable": true
+},
+{
+"pubkey": "4T4yqMCQnMg69tFBdo6nVDEvGmmM73RJSxkAsiR1Grdi",
+"isSigner": false,
+"isWritable": true
+},
+{
+"pubkey": "HBTab3gFGxwPkbqUMqqhwswHDfybrJsPTXy1DDdYuqGo",
+"isSigner": false,
+"isWritable": true
+},
+{
+"pubkey": "EMdcVnAigQDBLFj2KQafvFKeBhMhac7LafZv2LTsrise",
+"isSigner": false,
+"isWritable": true
+},
+{
+"pubkey": "So11111111111111111111111111111111111111112",
+"isSigner": false,
+"isWritable": false
+},
+{
+"pubkey": "FrAqBUnCz8z7Sm7GVh4moJJEbGcoBinUM5BxSAAfvE7o",
+"isSigner": false,
+"isWritable": true
+},
+{
+"pubkey": "BKxadbyMKTTY4drGmv9cxvoFpWSaCVoLDu6g9D77Vmhq",
+"isSigner": false,
+"isWritable": true
+},
+{
+"pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+"isSigner": false,
+"isWritable": false
+},
+{
+"pubkey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+"isSigner": false,
+"isWritable": false
+},
+{
+"pubkey": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+"isSigner": false,
+"isWritable": false
+},
+{
+"pubkey": "11111111111111111111111111111111",
+"isSigner": false,
+"isWritable": false
+},
+{
+"pubkey": "ENW2gVxLHf3p4EFxAxC3mi7EoMFRoqKWGou1PvSBFQQc",
+"isSigner": false,
+"isWritable": false
+},
+{
+"pubkey": "RiseP9yY3UnMxd1df7mgGJiR39frg9QGsr1ro3zxrDq",
+"isSigner": false,
+"isWritable": false
+}
+],
+"data": "AJTQ2h9DXrBoTqkPJxvbDV2fmXXF9DeUF"
+},
+"sellAccounts": [
+"24Q5e2FRebiFs3iWvN6pZYA4UTGzA3WUsci4ChhgfYEU",
+"9akRrSgLmVgJayrdYPygwV4U3YXrAMud2fYS98QMjeRR",
+"8x2X6yCLHrU7MGHBYmnKPfqk8ZiaCrKN2xt6B8qMi2B2",
+"GfeAL743ak18a5ifSqiKhFrHNWx2pXs9UsZPV6rrGeWf",
+"4T4yqMCQnMg69tFBdo6nVDEvGmmM73RJSxkAsiR1Grdi",
+"HBTab3gFGxwPkbqUMqqhwswHDfybrJsPTXy1DDdYuqGo",
+"EMdcVnAigQDBLFj2KQafvFKeBhMhac7LafZv2LTsrise",
+"So11111111111111111111111111111111111111112",
+"FrAqBUnCz8z7Sm7GVh4moJJEbGcoBinUM5BxSAAfvE7o",
+"BKxadbyMKTTY4drGmv9cxvoFpWSaCVoLDu6g9D77Vmhq",
+"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+"ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+"11111111111111111111111111111111",
+"ENW2gVxLHf3p4EFxAxC3mi7EoMFRoqKWGou1PvSBFQQc",
+"RiseP9yY3UnMxd1df7mgGJiR39frg9QGsr1ro3zxrDq"
+]
+}
