@@ -2,6 +2,7 @@
 // no keypair required. Live trading requires MODE=live AND KEYPAIR_PATH AND
 // CONFIRM_LIVE=yes.
 import { readFileSync } from "node:fs";
+import { isIP } from "node:net";
 import { Keypair, PublicKey } from "@solana/web3.js";
 
 export type Mode = "simulate" | "live";
@@ -94,6 +95,30 @@ export interface ShredsConfig {
   holdWindowMs: number;
 }
 
+/**
+ * ERPC "Shreds UDP Forwarding": raw turbine shreds forwarded as UDP to this host. Enabled iff
+ * SHREDS_UDP_PORT is set; then it replaces the gRPC ShredStream path (SHREDSTREAM_ENDPOINT).
+ */
+export interface ShredsUdpConfig {
+  port: number;
+  bind: string;
+  /** Requested SO_RCVBUF bytes (capped by net.core.rmem_max). */
+  rcvbuf: number;
+  /** Source IPs accepted (ERPC's forwarders). Empty = accept all, with a warning. */
+  allowedSources: string[];
+  /** Expected cluster shred version (optional). */
+  shredVersion?: number;
+  maxSlotLag: number;
+  maxBufferedBytes: number;
+  recovery: boolean;
+  summaryMs: number;
+  staleMs: number;
+  resolveLookupTables: boolean;
+  holdWindowMs: number;
+  /** SHREDSTREAM_ENDPOINT was also set and is ignored. */
+  overridesShredstream: boolean;
+}
+
 /** The reference wallet whose strategy this bot mirrors; used as SIM_USER by default. */
 export const REFERENCE_WALLET = "24Q5e2FRebiFs3iWvN6pZYA4UTGzA3WUsci4ChhgfYEU";
 
@@ -135,6 +160,7 @@ export interface Config {
   wsUrl?: string;
   grpc: GrpcConfig | null;
   shreds: ShredsConfig | null;
+  shredsUdp: ShredsUdpConfig | null;
   /** Skip a trade when ShredStream shows a competing arb on the pool not yet in our snapshot. Off by default. */
   holdOnCompetingArb: boolean;
   /** Period of the latency summary ledger row (0 = off). */
@@ -247,7 +273,7 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
       sendRpcUrl: url("SEND_RPC_URL", ["https:", "http:"]),
       wsUrl: url("WS_URL", ["wss:", "ws:"]),
       grpc: grpcFromEnv(commitment),
-      shreds: shredsFromEnv(),
+      ...shredFeedsFromEnv(),
       holdOnCompetingArb: bool("SHREDS_HOLD_ON_COMPETING_ARB", false),
       latencySummaryMs: num("LATENCY_SUMMARY_MS", 60_000),
       sendWarmMs: num("SEND_RPC_WARM_MS", 0),
@@ -333,6 +359,49 @@ function shredsFromEnv(): ShredsConfig | null {
   };
 }
 
+function int(name: string, def: number | undefined, min: number, max: number): number | undefined {
+  const v = env(name);
+  if (v === undefined) return def;
+  const n = Number(v.replace(/_/g, ""));
+  if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${name} must be an integer in [${min}, ${max}], got ${v}`);
+  return n;
+}
+
+/** Comma-separated IP list (no hostnames: compared against the UDP source address). */
+function ipList(name: string): string[] {
+  const v = env(name);
+  if (v === undefined) return [];
+  const out = v.split(",").map((x) => x.trim()).filter(Boolean);
+  for (const ip of out) if (isIP(ip) === 0) throw new Error(`${name} must be a comma-separated list of IP addresses, got ${ip}`);
+  return out;
+}
+
+function shredFeedsFromEnv(): { shreds: ShredsConfig | null; shredsUdp: ShredsUdpConfig | null } {
+  const shreds = shredsFromEnv();
+  const port = int("SHREDS_UDP_PORT", undefined, 1, 65_535);
+  if (port === undefined) return { shreds, shredsUdp: null };
+  const latency = num("LATENCY_SUMMARY_MS", 60_000);
+  return {
+    // only one shred source at a time: UDP wins
+    shreds: null,
+    shredsUdp: {
+      port,
+      bind: env("SHREDS_UDP_BIND", "0.0.0.0")!,
+      rcvbuf: int("SHREDS_UDP_RCVBUF", 64 * 1024 * 1024, 65_536, 2 ** 31 - 1)!,
+      allowedSources: ipList("SHREDS_UDP_ALLOWED_SOURCES"),
+      shredVersion: int("SHREDS_UDP_SHRED_VERSION", undefined, 0, 65_535),
+      maxSlotLag: int("SHREDS_UDP_MAX_SLOT_LAG", 12, 1, 1_000)!,
+      maxBufferedBytes: int("SHREDS_UDP_MAX_BUFFER_MB", 128, 8, 16_384)! * 1024 * 1024,
+      recovery: bool("SHREDS_UDP_RECOVERY", true),
+      summaryMs: num("SHREDS_UDP_SUMMARY_MS", latency > 0 ? latency : 60_000),
+      staleMs: num("SHREDS_UDP_STALE_MS", 5_000),
+      resolveLookupTables: bool("SHREDS_RESOLVE_ALTS", true),
+      holdWindowMs: num("SHREDS_HOLD_WINDOW_MS", 1_500),
+      overridesShredstream: shreds !== null,
+    },
+  };
+}
+
 const SECRET_KEYS = new Set(["xToken", "uuid"]);
 const URL_KEYS = new Set(["rpcUrl", "sendRpcUrl", "wsUrl", "endpoint", "blockEngineUrl"]);
 
@@ -355,6 +424,7 @@ export function describeConfig(c: Config): Record<string, string> {
     const name = prefix + k;
     if (k === "keypair") out[name] = v ? "(loaded)" : "(none)";
     else if (SECRET_KEYS.has(k)) out[name] = v ? "(set)" : "(unset)";
+    else if (k === "allowedSources" && Array.isArray(v)) out[name] = v.length ? `${v.length} address(es)` : "(any)";
     else if (URL_KEYS.has(k)) out[name] = redactUrl(v as string | undefined);
     else if (v instanceof PublicKey) out[name] = v.toBase58();
     else if (v && typeof v === "object") for (const [k2, v2] of Object.entries(v)) put(k2, v2, `${name}.`);

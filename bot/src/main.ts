@@ -67,7 +67,7 @@ async function main() {
 
   const { rise, dlmm } = await createVenues(conn, cfg);
   // optional ERPC infra: Geyser gRPC state, ShredStream hints, SEND_RPC_URL (SWQoS) delivery
-  const infra = setupInfra(cfg, conn);
+  const infra = setupInfra(cfg, conn, console.log, { onShredsUdpSummary: (s) => ledger.append("latency", s) });
   const delivery = makeDelivery(cfg, conn, infra.sendConn);
   const engine = new ArbEngine({ conn, rise, dlmm, cfg, ledger, sender: delivery.sender, preparer: delivery.preparer, risk, stateProvider: infra.stateProvider, pending: infra.pending });
 

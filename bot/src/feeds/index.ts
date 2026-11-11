@@ -9,6 +9,7 @@ import { ChangeSignal } from "./signal.js";
 import { GrpcProvider, yellowstoneConnect } from "./grpc.js";
 import { AltCache, PendingActivity, ShredFeed, defaultWatchSet, grpcEntriesConnect } from "./shreds.js";
 import { keepAliveFetch } from "./http.js";
+import { ShredsUdpFeed } from "./shreds-udp.js";
 
 /** Read connection: keep-alive fetch (honours HTTP(S)_PROXY), optional WS_URL. */
 export function makeReadConnection(cfg: Config): Connection {
@@ -24,6 +25,8 @@ export interface Infra {
   pending?: PendingActivity;
   grpc?: GrpcProvider;
   shreds?: ShredFeed;
+  /** Raw shreds over UDP (ERPC Shreds UDP Forwarding); exclusive with `shreds`. */
+  shredsUdp?: ShredsUdpFeed;
   /** True when a push feed can wake the loop early. */
   eventDriven: boolean;
   /** Wait for a feed event or up to ms; resolves with the trigger reason ("timeout" if none). */
@@ -33,7 +36,12 @@ export interface Infra {
   describe(): Record<string, string>;
 }
 
-export function setupInfra(cfg: Config, conn: Connection, log: (m: string) => void = console.log): Infra {
+export interface InfraHooks {
+  /** Periodic shreds-udp summary (main.ts appends it to the ledger as a `latency` row). */
+  onShredsUdpSummary?: (s: Record<string, unknown>) => void;
+}
+
+export function setupInfra(cfg: Config, conn: Connection, log: (m: string) => void = console.log, hooks: InfraHooks = {}): Infra {
   const signal = new ChangeSignal();
   const sendConn = cfg.sendRpcUrl ? new Connection(cfg.sendRpcUrl, { commitment: cfg.commitment, fetch: keepAliveFetch({ connections: 4 }) }) : undefined;
   let grpc: GrpcProvider | undefined;
@@ -64,16 +72,31 @@ export function setupInfra(cfg: Config, conn: Connection, log: (m: string) => vo
     });
   }
 
+  let shredsUdp: ShredsUdpFeed | undefined;
+  const u = cfg.shredsUdp;
+  if (u) {
+    if (u.overridesShredstream) log("SHREDS_UDP_PORT and SHREDSTREAM_ENDPOINT are both set: using UDP shreds, ignoring SHREDSTREAM_ENDPOINT");
+    pending = new PendingActivity(u.holdWindowMs);
+    shredsUdp = new ShredsUdpFeed({
+      port: u.port, bind: u.bind, rcvbuf: u.rcvbuf, allowedSources: u.allowedSources, shredVersion: u.shredVersion,
+      maxSlotLag: u.maxSlotLag, maxBufferedBytes: u.maxBufferedBytes, recovery: u.recovery, summaryMs: u.summaryMs, staleMs: u.staleMs,
+      watch: defaultWatchSet([cfg.user.toBase58()]),
+      resolver: u.resolveLookupTables ? new AltCache(conn, 5000, log) : undefined,
+      pending, signal, log, onSummary: hooks.onShredsUdpSummary,
+    });
+  }
+
   let warm: ReturnType<typeof setInterval> | null = null;
-  const eventDriven = !!(g || s);
+  const eventDriven = !!(g || s || u);
   return {
-    sendConn, signal, stateProvider, pending, shreds,
+    sendConn, signal, stateProvider, pending, shreds, shredsUdp,
     get grpc() { return grpc; },
     eventDriven,
     wait: (ms: number) => (eventDriven ? signal.wait(ms) : new Promise<string>((r) => setTimeout(() => r("timeout"), ms))),
     start() {
       grpc?.start();
       shreds?.start();
+      shredsUdp?.start();
       if (sendConn && cfg.sendWarmMs > 0) {
         // Any request keeps the pooled TLS connection warm; errors are irrelevant.
         warm = setInterval(() => { sendConn.getSlot().catch(() => undefined); }, cfg.sendWarmMs);
@@ -84,11 +107,12 @@ export function setupInfra(cfg: Config, conn: Connection, log: (m: string) => vo
       if (warm) clearInterval(warm);
       grpc?.close();
       shreds?.close();
+      shredsUdp?.close();
     },
     describe() {
       return {
         state: grpc ? `grpc(${g!.commitment}) with RPC-poll fallback` : "rpc-poll",
-        shreds: shreds ? `on (serverFilter=${s!.serverFilter}, hold=${cfg.holdOnCompetingArb})` : "off",
+        shreds: shredsUdp ? `${shredsUdp.describe()} hold=${cfg.holdOnCompetingArb}` : shreds ? `grpc (serverFilter=${s!.serverFilter}, hold=${cfg.holdOnCompetingArb})` : "off",
         send: sendConn ? "SEND_RPC_URL" : "RPC_URL",
         loop: eventDriven ? `event-driven (max ${cfg.pollIntervalMs} ms between ticks)` : `poll every ${cfg.pollIntervalMs} ms`,
       };

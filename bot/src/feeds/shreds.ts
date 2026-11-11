@@ -533,32 +533,66 @@ export class ShredFeed {
       return [];
     }
     if (slot > this.lastSlot) this.lastSlot = slot;
-    const kind = classifyPayload(payload);
-    if (kind !== "entries") { if (kind === "block-marker") this.stats.markers++; return []; }
-    let entries: DecodedEntry[];
+    let r: PayloadMatch;
     try {
-      entries = decodeEntries(payload);
+      r = matchEntriesPayload(payload, slot, this.o.watch, this.o.resolver, at);
     } catch (e) {
       this.stats.decodeErrors++;
       if (this.stats.decodeErrors <= 5 || this.stats.decodeErrors % 1000 === 0) this.log(`shred decode error #${this.stats.decodeErrors} (slot ${slot}): ${(e as Error).message}`);
       return [];
     }
-    const hits: ShredHit[] = [];
-    for (const e of entries) {
-      this.stats.entries++;
-      for (const tx of e.transactions) {
-        this.stats.txs++;
-        const h = classifyTx(tx, slot, this.o.watch, this.o.resolver, at);
-        if (h) hits.push(h);
-      }
-    }
-    for (const h of hits) {
-      this.stats.hits++;
-      this.o.pending?.record(h);
-      const fee = h.cuPriceMicroLamports !== undefined ? ` cuPrice=${h.cuPriceMicroLamports}µ cuLimit=${h.cuLimit ?? "?"}` : h.v1PriorityFee !== undefined ? ` v1PriorityFee=${h.v1PriorityFee}` : "";
-      this.log(`[shred ${h.slot}] pending ${h.own ? "OWN " : ""}${h.kind} ${h.signature.slice(0, 16)}… payer ${h.feePayer.slice(0, 8)}… v${h.version}${fee}${h.unresolvedLookups ? ` (${h.unresolvedLookups} unresolved ALTs)` : ""}`);
-    }
-    if (hits.some((h) => !h.own)) this.o.signal?.notify(`shred:${hits.find((h) => !h.own)!.kind}`);
-    return hits;
+    if (r.kind !== "entries") { if (r.kind === "block-marker") this.stats.markers++; return []; }
+    this.stats.entries += r.entries;
+    this.stats.txs += r.txs;
+    this.stats.hits += r.hits.length;
+    reportHits(r.hits, { pending: this.o.pending, signal: this.o.signal, log: this.log });
+    return r.hits;
   }
+}
+
+// ============================ shared by the gRPC and UDP shred paths ============================
+
+export interface PayloadMatch {
+  kind: PayloadKind;
+  entries: number;
+  txs: number;
+  hits: ShredHit[];
+}
+
+/**
+ * Decode one deshredded payload (a bincode Vec<Entry>, or an Alpenglow block marker / empty
+ * batch) and classify every transaction against the watch set. Throws on a malformed entries
+ * payload (callers count it as a decode error).
+ */
+export function matchEntriesPayload(payload: Uint8Array, slot: number, watch: WatchSet, resolver: LookupResolver | undefined, at: number): PayloadMatch {
+  const kind = classifyPayload(payload);
+  if (kind !== "entries") return { kind, entries: 0, txs: 0, hits: [] };
+  const entries = decodeEntries(payload);
+  const hits: ShredHit[] = [];
+  let txs = 0;
+  for (const e of entries) {
+    for (const tx of e.transactions) {
+      txs++;
+      const h = classifyTx(tx, slot, watch, resolver, at);
+      if (h) hits.push(h);
+    }
+  }
+  return { kind, entries: entries.length, txs, hits };
+}
+
+export interface HitSink {
+  pending?: PendingActivity;
+  signal?: ChangeSignal;
+  log: (m: string) => void;
+}
+
+/** Log hits, record them as pending activity and wake the engine once for any non-own hit. */
+export function reportHits(hits: ShredHit[], o: HitSink, tag = "shred", extra?: (h: ShredHit) => string): void {
+  for (const h of hits) {
+    o.pending?.record(h);
+    const fee = h.cuPriceMicroLamports !== undefined ? ` cuPrice=${h.cuPriceMicroLamports}µ cuLimit=${h.cuLimit ?? "?"}` : h.v1PriorityFee !== undefined ? ` v1PriorityFee=${h.v1PriorityFee}` : "";
+    o.log(`[${tag} ${h.slot}] pending ${h.own ? "OWN " : ""}${h.kind} ${h.signature.slice(0, 16)}… payer ${h.feePayer.slice(0, 8)}… v${h.version}${fee}${h.unresolvedLookups ? ` (${h.unresolvedLookups} unresolved ALTs)` : ""}${extra ? extra(h) : ""}`);
+  }
+  const first = hits.find((h) => !h.own);
+  if (first) o.signal?.notify(`shred:${first.kind}`);
 }

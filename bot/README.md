@@ -73,10 +73,17 @@ MODE=live KEYPAIR_PATH=~/bot.keypair.json CONFIRM_LIVE=yes RPC_URL=https://<your
 | `GRPC_COMMITMENT` | `COMMITMENT` | `processed` / `confirmed` / `finalized` for the stream. |
 | `GRPC_PING_MS` / `GRPC_STALE_MS` / `GRPC_DEBOUNCE_MS` | `10000` / `3000` / `3` | Keepalive ping, staleness cutoff (then RPC poll), per-slot debounce (flushes earlier on the slot status). |
 | `GRPC_RECONNECT_MIN_MS` / `GRPC_RECONNECT_MAX_MS` | `250` / `15000` | Reconnect backoff. |
-| `SHREDSTREAM_ENDPOINT` / `SHREDSTREAM_X_TOKEN` | – | ShredStream entries (ERPC Shreds). Hint only, never applied to state. |
+| `SHREDS_UDP_PORT` | – | ERPC **Shreds UDP Forwarding**: bind this UDP port and ingest raw shreds (see below). Off unless set. Takes precedence over `SHREDSTREAM_ENDPOINT`. Hint only, never applied to state. |
+| `SHREDS_UDP_BIND` / `SHREDS_UDP_RCVBUF` | `0.0.0.0` / `67108864` | Bind address; requested `SO_RCVBUF` (capped by `net.core.rmem_max`, the effective size is logged). |
+| `SHREDS_UDP_ALLOWED_SOURCES` | – (any, with a warning) | Comma-separated source IPs accepted (ERPC's forwarders). Put the real IPs in your env file only. |
+| `SHREDS_UDP_SHRED_VERSION` | – | Drop shreds with another cluster shred version. |
+| `SHREDS_UDP_RECOVERY` | `1` | Reed-Solomon recovery of missing data shreds from coding shreds (Merkle-verified). |
+| `SHREDS_UDP_MAX_SLOT_LAG` / `SHREDS_UDP_MAX_BUFFER_MB` | `12` / `128` | Evict slots this far behind the newest; cap on buffered shred memory. |
+| `SHREDS_UDP_SUMMARY_MS` / `SHREDS_UDP_STALE_MS` | `LATENCY_SUMMARY_MS` / `5000` | Summary log + ledger row period; "no packets" warning. |
+| `SHREDSTREAM_ENDPOINT` / `SHREDSTREAM_X_TOKEN` | – | Alternative: ShredStream gRPC `SubscribeEntries` (decoded entries). Used only when `SHREDS_UDP_PORT` is unset. Hint only. |
 | `SHREDSTREAM_SERVER_FILTER` | `0` | Ask ERPC to pre-filter entries by account (marked experimental by ERPC). |
 | `SHREDSTREAM_STALE_MS` | `5000` | Recycle the shred stream after this long without data. |
-| `SHREDS_RESOLVE_ALTS` | `1` | Resolve lookup tables of relevant-looking v0 txs via RPC. |
+| `SHREDS_RESOLVE_ALTS` | `1` | Resolve lookup tables of relevant-looking v0 txs via RPC (both shred paths). |
 | `SHREDS_HOLD_ON_COMPETING_ARB` / `SHREDS_HOLD_WINDOW_MS` | `0` / `1500` | Skip a trade while a competing arb on the pool is pending. Off by default. |
 | `LATENCY_SUMMARY_MS` | `60000` | Period of the `latency` summary ledger row (0 = off). |
 | `DELIVERY` | `rpc` | `rpc` (sendRawTransaction to `SEND_RPC_URL`/`RPC_URL`) or `jito` (single-tx bundle with an in-tx tip). `ab` = live A/B, refused unless `MODE=live`, `CONFIRM_LIVE=yes`, `DELIVERY_COMPARE_LIVE=yes`. |
@@ -216,6 +223,13 @@ src/feeds/              optional ERPC infrastructure, all env-driven (src/feeds/
   shreds.ts             ShredStream SubscribeEntries client + Vec<Entry> decoder (legacy, v0, v1 txs; Alpenglow
                         markers skipped). Flags txs touching the RISE program, the pool or its reserves; logs them,
                         wakes the engine, feeds PendingActivity (optional hold rule). Never used as state.
+                        matchEntriesPayload / reportHits are shared with the UDP path.
+  shreds-udp.ts         ShredsUdpFeed: raw shreds over UDP (ERPC Shreds UDP Forwarding): source filter, parse,
+                        per-slot deshred of completed data ranges, Reed-Solomon recovery, same match/hint as above;
+                        metrics + periodic summary; `--replay <capture>` CLI.
+  shred-wire.ts         shred wire format (Agave solana-ledger 4.4.1): variants, headers, bounds, Merkle helpers
+  reed-solomon.ts       GF(2^8) Reed-Solomon, bit-compatible with reed-solomon-erasure 6.0.0 (Agave's coder)
+  shreds-udp-capture.ts record raw packets (arrival ns + source) to a capture file for offline replay
   http.ts               keep-alive undici fetch for RPC_URL / SEND_RPC_URL
   signal.ts             ChangeSignal (coalescing wake-up)
 
@@ -228,7 +242,8 @@ the path from Geyser update to decision to sent tx short. All three ERPC service
 |---|---|---|
 | ERPC RPC / SWQoS | `RPC_URL`, `SEND_RPC_URL` | reads/sims on `RPC_URL`; txs sent (and rebroadcast until expiry) to `SEND_RPC_URL` over a warm keep-alive connection |
 | ERPC Geyser gRPC | `GRPC_ENDPOINT`, `GRPC_X_TOKEN` | streamed account state instead of per-tick polling; the loop re-optimizes on each relevant update |
-| ERPC Shreds | `SHREDSTREAM_ENDPOINT` | early view of pending competing arbs and pool swaps (logged; optional hold) |
+| ERPC Shreds UDP Forwarding | `SHREDS_UDP_PORT`, `SHREDS_UDP_ALLOWED_SOURCES` | raw shreds to this VPS; early view of pending competing arbs and pool swaps (logged; optional hold) |
+| ERPC ShredStream gRPC (alternative) | `SHREDSTREAM_ENDPOINT` | same hint from decoded entries; ignored when `SHREDS_UDP_PORT` is set |
 
 Without them the bot behaves exactly as before: it polls `RPC_URL` every `POLL_INTERVAL_MS`.
 
@@ -250,6 +265,21 @@ journalctl -u rise-arb -f
   tx (`TimeoutStopSec=150`). It restarts only on crashes. A clean stop, such as the session loss limit, stays stopped.
 - Check at startup: the `infra:` log line and the `start` ledger row show which feeds are active. Tokens and URL paths
   are redacted.
+- Shreds UDP: ERPC sends shreds from its forwarder IPs to the port configured in the dashboard (e.g. 20000).
+  Set `SHREDS_UDP_PORT` to it and `SHREDS_UDP_ALLOWED_SOURCES` to those IPs (env file only; nothing is
+  hard-coded). Allow the port in the firewall for those sources only
+  (`sudo ufw allow proto udp from <ip> to any port 20000`) and raise the receive buffer limit
+  (`sudo sysctl -w net.core.rmem_max=134217728`, persist in `/etc/sysctl.d/`); the startup log line
+  `shreds-udp listening … SO_RCVBUF effective …` shows what the kernel granted. A
+  `shreds-udp <n> pkt/s …` summary line and a `latency` ledger row with `kind: "shreds-udp"` (packets/s, invalid,
+  foreign-source drops, duplicates, shreds per slot, completed / recovered / incomplete batches, unrecoverable FEC
+  sets, decoded txs, matches, first-shred→match p50/p90/max) are written every `SHREDS_UDP_SUMMARY_MS`.
+  Hits are logged as `[shred-udp <slot>] pending arb … +<ms> from first shred`.
+- Capture and replay (bot stopped, or another port — two sockets on one port do not both receive):
+  `npx tsx src/feeds/shreds-udp-capture.ts --port 20000 --seconds 30 --out /var/tmp/shreds.shredcap [--allow ip,ip]`,
+  then offline `npx tsx src/feeds/shreds-udp.ts --replay /var/tmp/shreds.shredcap`. `--out` is required, so nothing
+  is recorded by default; keep captures out of the repo (`*.shredcap` is gitignored). `replayCapture()` feeds a
+  capture into tests.
 - Health: `grpc feed healthy` / `grpc feed not usable … RPC polling` log lines mark the fallback transitions. Shred
   hits are logged as `[shred <slot>] pending arb|pool-swap|rise …` with the competitor's fee payer and priority fee.
 - Latency: opportunity, final simulation, hold and outcome rows carry `latency` = {source, trigger, queueMs, refreshMs,
@@ -319,7 +349,7 @@ On 100 saved txs of the reference wallet (slots 467,774,316 – 468,135,211):
 | Update → tx built, worst case offline (both venues changed + arb) | 12.1 ms median / 17.7–22.2 ms p95 across runs | `src/engine/bench.ts offline` |
 | Live data → decision (public RPC polling) | 0.6 / 1.4 ms; RPC poll itself 145 / 181 ms | `bench.ts live` |
 | Live `simulateTransaction` RTT (public RPC) | 50–64 ms median, 84 ms p95 | `bench.ts live --force-build` |
-| Tests | 103 pass, `tsc` clean | `npm test` |
+| Tests | 120 pass, `tsc` clean | `npm test` |
 
 Fixed during the audit (each with a regression test):
 - `DELIVERY=ab` Jito arm added a tip the on-chain min-out did not cover.
@@ -331,6 +361,15 @@ Fixed during the audit (each with a regression test):
 Known limitations:
 - No live sends were made: submission, landing rate, landing latency, and Jito vs RPC comparison are **unmeasured**. The live A/B harness exists but requires explicit approval flags.
 - ERPC gRPC, ShredStream and SWQoS paths are tested against local mocks built from ERPC's published client/protos only — not against ERPC servers.
+- Shreds UDP: validated only against synthetic shreds built in the tests from the Agave 4.4.1 source (layout, Merkle
+  tree, 32:32 FEC sets, resigned last set) with a Reed-Solomon coder checked against reed-solomon-erasure's published
+  vectors. No real ERPC capture was available; record one with `shreds-udp-capture.ts` and replay it before relying on
+  the hint. Leader signatures are **not** verified (needs the leader schedule + ed25519 per FEC set): packets are
+  only trusted as far as `SHREDS_UDP_ALLOWED_SOURCES`, and a forged shred can at worst cause a spurious log line, an
+  early re-evaluation or (opt-in) a hold; it never reaches state, quotes or signing. Recovered shreds are checked
+  against the FEC set's Merkle root. A data range is decoded only if its start is known (index 0 or the previous
+  `DATA_COMPLETE` shred seen/recovered): after joining mid-slot the first partial range is skipped. Legacy and
+  unchained Merkle shreds (rejected by Agave 4.x) are dropped.
 - First tick per direction (and after a failed final sim) pre-simulates to learn the CU limit, adding one sim RTT (~65 ms live) before the final tx; steady state is ~2 ms.
 - DLMM variable-fee branch with non-zero volatility reference was not hit in live validation (pool was idle); it is covered by historical-tx replay only.
 - gRPC reseed after reconnect with `GRPC_COMMITMENT=processed` can miss a change made during the gap until the account changes again (default commitment is `confirmed`).
