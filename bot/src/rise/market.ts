@@ -50,10 +50,11 @@ export function decodeMarket(data: Buffer): MarketView {
 }
 
 /**
- * Fee split as observed on every historical trade: fee = ceil(amount * ppm / 1e6),
- * each of the two fee accounts gets floor(fee / 2), the odd lamport stays in the vault.
- * Buy: amount = lamports_in, curve receives lamports_in - 2*half.
- * Sell: amount = gross SOL from the curve, user receives gross - 2*half.
+ * Fee math, verified on 93 historical trades: fee = ceil(amount * ppm / 1e6) and
+ * each of the two fee accounts (creator_claim, team_vault) receives floor(fee / 2).
+ * Buy: amount = lamports_in; the curve prices lamports_in - fee; the vault is
+ *      credited lamports_in - 2*half (an odd lamport stays in the vault).
+ * Sell: amount = gross SOL from the curve; the user receives gross - fee.
  */
 export function feeSplit(amount: bigint, ppm: number): { fee: bigint; half: bigint; charged: bigint } {
   const p = BigInt(ppm);

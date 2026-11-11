@@ -32,6 +32,7 @@ export interface RiseNativeConfig {
 const geo = (lo: number, hi: number, n: number) =>
   Array.from({ length: n }, (_, i) => BigInt(Math.round(lo * Math.pow(hi / lo, i / (n - 1)))));
 
+const PROGRAM_CHECK_MS = 30_000;
 const PROGRAMDATA_HEADER = 45; // u32 tag(3) | u64 deploy slot | Option<Pubkey> authority
 
 export class RiseNative implements RiseVenue {
@@ -42,6 +43,9 @@ export class RiseNative implements RiseVenue {
   /** Slot at which the currently loaded program binary was deployed. */
   programDeploySlot: bigint | null = null;
   private fetching = false;
+  private lastProgramCheck = 0;
+  /** True from detecting a program upgrade until the new binary is loaded: no quotes. */
+  programStale = false;
   private cache = new Map<string, bigint | null>();
   private fastBuy: [bigint, bigint][] | null = null;
   private fastSell: [bigint, bigint][] | null = null;
@@ -57,6 +61,11 @@ export class RiseNative implements RiseVenue {
   /** Optional eager setup: fetch the program binary and an initial snapshot. */
   async init(conn: Connection | undefined = this.cfg.connection): Promise<void> {
     if (!conn) throw new Error("RiseNative.init needs a Connection");
+    const pd = await conn.getAccountInfo(this.acc.programData, "confirmed");
+    if (!pd || pd.data.length <= PROGRAMDATA_HEADER) throw new Error("RISE programdata not found");
+    this.oracle.setProgram(Buffer.from(pd.data.subarray(PROGRAMDATA_HEADER)));
+    this.programDeploySlot = pd.data.readBigUInt64LE(4);
+    this.lastProgramCheck = Date.now();
     const keys = this.accounts();
     const r = await conn.getMultipleAccountsInfoAndContext(keys, "confirmed");
     const m = new Map<string, AccountInfo<Buffer> | null>();
@@ -74,7 +83,6 @@ export class RiseNative implements RiseVenue {
       MINT,
       WSOL,
       RENT_SYSVAR,
-      this.acc.programData,
     ];
   }
 
@@ -83,18 +91,21 @@ export class RiseNative implements RiseVenue {
     this.cache.clear();
     this.fastBuy = this.fastSell = null;
 
+    // The ~1.15 MB programdata account is NOT part of accounts() (it would be
+    // re-downloaded every tick). Instead check its 45-byte header periodically and
+    // refuse to quote (programStale) from the moment an upgrade is seen until the
+    // new binary is loaded.
+    // Callers (tests, validate.ts) may still pass a full programdata account explicitly.
     const pd = infos.get(this.acc.programData.toBase58());
-    if (pd && pd.data.length >= 12) {
+    if (pd && pd.data.length > PROGRAMDATA_HEADER) {
       const deploy = pd.data.readBigUInt64LE(4);
       if (deploy !== this.programDeploySlot) {
-        if (pd.data.length > PROGRAMDATA_HEADER) {
-          this.oracle.setProgram(Buffer.from(pd.data.subarray(PROGRAMDATA_HEADER)));
-          this.programDeploySlot = deploy;
-        } else {
-          this.refetchProgram(deploy);
-        }
+        this.oracle.setProgram(Buffer.from(pd.data.subarray(PROGRAMDATA_HEADER)));
+        this.programDeploySlot = deploy;
+        this.programStale = false;
       }
     }
+    if (Date.now() - this.lastProgramCheck > PROGRAM_CHECK_MS) this.checkProgram();
 
     const m = infos.get(this.acc.market.toBase58());
     this.market = m ? decodeMarket(Buffer.from(m.data)) : null;
@@ -112,23 +123,32 @@ export class RiseNative implements RiseVenue {
     this.oracle.warm();
   }
 
-  private refetchProgram(deploy: bigint): void {
+  private checkProgram(): void {
     const conn = this.cfg.connection;
     if (!conn || this.fetching) return;
     this.fetching = true;
-    conn.getAccountInfo(this.acc.programData, "confirmed").then((a) => {
+    this.lastProgramCheck = Date.now();
+    (async () => {
+      const head = await conn.getAccountInfo(this.acc.programData, { commitment: "confirmed", dataSlice: { offset: 0, length: PROGRAMDATA_HEADER } });
+      if (!head || head.data.length < 12) return;
+      const deploy = head.data.readBigUInt64LE(4);
+      if (deploy === this.programDeploySlot) return;
+      this.programStale = true;
+      this.cache.clear();
+      const a = await conn.getAccountInfo(this.acc.programData, "confirmed");
       if (a && a.data.length > PROGRAMDATA_HEADER) {
         this.oracle.setProgram(Buffer.from(a.data.subarray(PROGRAMDATA_HEADER)));
         this.programDeploySlot = a.data.readBigUInt64LE(4);
+        this.programStale = false;
         this.cache.clear();
+        this.fastBuy = this.fastSell = null;
       }
-    }).catch(() => { /* retried on next update */ }).finally(() => { this.fetching = false; });
-    void deploy;
+    })().catch(() => { /* retried on next check */ }).finally(() => { this.fetching = false; });
   }
 
   private exact(kind: "buy" | "sell", amount: bigint): bigint | null {
     if (amount <= 0n || amount >= 1n << 64n) return null;
-    if (!this.market) return null;
+    if (!this.market || this.programStale || this.programDeploySlot === null) return null;
     // Avoid program-error paths we can predict (they are also where litesvm may abort).
     if (kind === "sell" && amount > this.market.supply) return null;
     if (kind === "buy" && amount < this.market.minTradeLamports) return null;

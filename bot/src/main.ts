@@ -8,9 +8,13 @@ import { RpcSender } from "./engine/sender.js";
 import { RiseNative } from "./rise/index.js";
 import { MeteoraDlmm } from "./meteora/index.js";
 
-export function createVenues(_conn: Connection, _cfg: Config): { rise: RiseVenue; dlmm: DlmmVenue } {
-  // venues do no I/O themselves: the engine feeds them account snapshots via StateSource.update()
-  return { rise: new RiseNative(), dlmm: new MeteoraDlmm() };
+export async function createVenues(conn: Connection, _cfg: Config): Promise<{ rise: RiseVenue; dlmm: DlmmVenue }> {
+  // Venues quote synchronously from snapshots fed via StateSource.update(). RiseNative
+  // additionally needs the connection to load the program binary (for its exact local
+  // execution oracle) and to watch for program upgrades.
+  const rise = new RiseNative({ connection: conn });
+  await rise.init();
+  return { rise, dlmm: new MeteoraDlmm() };
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -20,7 +24,7 @@ async function main() {
   // pass global fetch so NODE_USE_ENV_PROXY=1 works behind an HTTPS proxy
   const conn = new Connection(cfg.rpcUrl, { commitment: cfg.commitment, fetch: globalThis.fetch });
   const ledger = new Ledger(cfg.ledgerPath);
-  const { rise, dlmm } = createVenues(conn, cfg);
+  const { rise, dlmm } = await createVenues(conn, cfg);
   const sender = cfg.mode === "live" ? new RpcSender(conn, { rebroadcastMs: cfg.rebroadcastMs, commitment: cfg.commitment, log: console.log }) : undefined;
   const engine = new ArbEngine({ conn, rise, dlmm, cfg, ledger, sender });
 

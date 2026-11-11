@@ -49,7 +49,7 @@ async function main() {
   const save = process.argv.includes("--save-fixture");
   const conn = new Connection(RPC, "confirmed");
   const venue = new RiseNative({ connection: conn });
-  const keys = venue.accounts();
+  const keys = [...venue.accounts(), venue.acc.programData]; // full binary once, for the snapshot
   const uw = userWsolAta(USER), ur = userRiseAta(USER);
 
   for (let attempt = 0; attempt < 4; attempt++) {

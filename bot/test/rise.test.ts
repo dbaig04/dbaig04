@@ -67,15 +67,17 @@ test("buyIx / sellIx reproduce the historical instruction exactly", () => {
   v.close();
 });
 
-test("fee schedule matches all historical trades (ceil 1.25%, two floor halves)", () => {
+test("fee schedule matches all historical trades (fee = ceil 1.25%, two floor halves)", () => {
   assert.ok(history.fees.length >= 90);
   for (const f of history.fees) {
     const { fee, half, charged } = feeSplit(BigInt(f.amount), 12_500);
     assert.equal(fee.toString(), f.feeTotal, f.sig);
     assert.equal(half.toString(), f.creator, f.sig);
     assert.equal(half.toString(), f.team, f.sig);
-    if (f.kind === "buy") assert.equal((BigInt(f.amount) - charged).toString(), f.curveIn, f.sig);
-    else assert.equal((BigInt(f.amount) - charged).toString(), f.userOut, f.sig);
+    // Buy: the vault is credited lamports_in - 2*half (the odd lamport stays there);
+    // the curve prices lamports_in - fee. Sell: the user gets gross - fee.
+    if (f.kind === "buy") assert.equal((BigInt(f.amount) - charged).toString(), f.vaultIn, f.sig);
+    else assert.equal((BigInt(f.amount) - fee).toString(), f.userOut, f.sig);
   }
   const mk = decodeMarket(Buffer.from(snap.accounts[deriveAccounts().market.toBase58()].data, "base64"));
   assert.equal(mk.buyFeePpm, 12_500);
