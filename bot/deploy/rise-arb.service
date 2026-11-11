@@ -1,0 +1,53 @@
+# systemd unit for the RISE <-> Meteora DLMM arb bot on the ERPC VPS.
+#
+#   sudo useradd --system --create-home --home-dir /opt/rise-arb arb
+#   sudo -u arb git clone <your repo> /opt/rise-arb/app && cd /opt/rise-arb/app/bot && sudo -u arb npm ci
+#   sudo install -d -m 0750 -o root -g arb /etc/rise-arb
+#   sudo install -m 0640 -o root -g arb deploy/.env.example /etc/rise-arb/bot.env   # then edit it
+#   sudo install -m 0644 deploy/rise-arb.service /etc/systemd/system/rise-arb.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now rise-arb
+#   journalctl -u rise-arb -f
+#
+# MODE defaults to simulate (read-only paper trading). Live trading additionally needs
+# MODE=live, KEYPAIR_PATH and CONFIRM_LIVE=yes in /etc/rise-arb/bot.env.
+[Unit]
+Description=RISE/Meteora DLMM arbitrage bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=arb
+Group=arb
+WorkingDirectory=/opt/rise-arb/app/bot
+EnvironmentFile=/etc/rise-arb/bot.env
+Environment=NODE_ENV=production
+# node directly (not npx) so SIGTERM reaches the bot: it finishes the current tick and
+# waits for an in-flight tx before exiting.
+ExecStart=/usr/bin/node --import tsx src/main.ts
+KillSignal=SIGTERM
+# an in-flight tx is tracked until confirmation or blockhash expiry (~60-90 s)
+TimeoutStopSec=150
+# Restart on crashes only. A clean exit (e.g. the session loss limit kill-switch) stays stopped.
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=600
+StartLimitBurst=10
+# latency: modest priority boost; the box is dedicated to the bot
+Nice=-5
+LimitNOFILE=65536
+
+# hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/opt/rise-arb/app/bot/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

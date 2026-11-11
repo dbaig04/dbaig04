@@ -59,11 +59,26 @@ MODE=live KEYPAIR_PATH=~/bot.keypair.json CONFIRM_LIVE=yes RPC_URL=https://<your
 | `LEG_SLIPPAGE_BPS` | `0` | Slippage on the intermediate leg. 0 = exact quoted amount. |
 | `SIM_TOLERANCE_LAMPORTS` / `SIM_TOLERANCE_BPS` | `20000` / `1000` | Max allowed gap between simulated and quoted profit (whichever is larger). |
 | `CU_HEADROOM_BPS` | `11500` | CU limit = simulated units × 1.15. |
-| `POLL_INTERVAL_MS` | `1000` | Tick period. |
+| `POLL_INTERVAL_MS` | `1000` | Tick period. With a gRPC/Shreds feed: the max time between ticks (the loop is event-driven). |
 | `LEDGER_PATH` | `data/ledger.jsonl` | Append-only ledger. |
 | `MAX_SESSION_LOSS_LAMPORTS` | `2000000` | Stops the bot when the session's realized net falls below −this. |
 | `REBROADCAST_MS` | `2000` | Rebroadcast period of the RPC sender. |
 | `COMMITMENT` | `confirmed` | State and confirmation commitment. |
+| `SEND_RPC_URL` | – | Delivery endpoint for `sendRawTransaction` (ERPC SWQoS). Status polling stays on `RPC_URL`. |
+| `SEND_RPC_WARM_MS` | `0` | Keep the send connection warm with a cheap request every N ms (0 = off). |
+| `WS_URL` | derived | WebSocket endpoint for `RPC_URL`. |
+| `GRPC_ENDPOINT` / `GRPC_X_TOKEN` | – | Yellowstone Geyser gRPC (ERPC Geyser gRPC). Token goes in the `x-token` header. |
+| `GRPC_COMMITMENT` | `COMMITMENT` | `processed` / `confirmed` / `finalized` for the stream. |
+| `GRPC_PING_MS` / `GRPC_STALE_MS` / `GRPC_DEBOUNCE_MS` | `10000` / `3000` / `20` | Keepalive ping, staleness cutoff (then RPC poll), per-slot debounce. |
+| `GRPC_RECONNECT_MIN_MS` / `GRPC_RECONNECT_MAX_MS` | `250` / `15000` | Reconnect backoff. |
+| `SHREDSTREAM_ENDPOINT` / `SHREDSTREAM_X_TOKEN` | – | ShredStream entries (ERPC Shreds). Hint only, never applied to state. |
+| `SHREDSTREAM_SERVER_FILTER` | `0` | Ask ERPC to pre-filter entries by account (marked experimental by ERPC). |
+| `SHREDSTREAM_STALE_MS` | `5000` | Recycle the shred stream after this long without data. |
+| `SHREDS_RESOLVE_ALTS` | `1` | Resolve lookup tables of relevant-looking v0 txs via RPC. |
+| `SHREDS_HOLD_ON_COMPETING_ARB` / `SHREDS_HOLD_WINDOW_MS` | `0` / `1500` | Skip a trade while a competing arb on the pool is pending. Off by default. |
+| `LATENCY_SUMMARY_MS` | `60000` | Period of the `latency` summary ledger row (0 = off). |
+
+All variables, with placeholders, are listed in [`deploy/.env.example`](deploy/.env.example).
 
 ## Safety defaults
 
@@ -96,6 +111,7 @@ src/engine/
   state.ts              StateManager: getSlot; if the slot advanced, ONE getMultipleAccountsInfo (chunks of 100,
                         pinned with minContextSlot) for the union of all sources' accounts(); refetches in the same
                         tick if a source's account set grows (e.g. bin arrays). TokenBalances = user's wSOL/RISE ATAs.
+                        StateProvider interface: PollingProvider (= StateManager, default) | GrpcProvider (src/feeds).
   optimizer.ts          per direction: log-spaced scan (+ linear points) → golden-section in the brackets of the
                         top-5 grid points → integer pattern search → exhaustive ±32 window. Domain is lamports in
                         (mintThenSell) or exact RISE out (buyThenRedeem, bounded by binary search so that
@@ -104,6 +120,7 @@ src/engine/
   tx.ts                 compute-budget ixs + leg ixs (venue.*Ix) with the mins above; fee math
   simulate.ts           simulateTransaction (sigVerify false, replaceRecentBlockhash, post-state of the wSOL and
                         RISE ATAs) → decoded SPL amounts → simulated profit + checks + CU limit
+  latency.ts            per-tick latency marks (update received → refreshed → decision → simulated → sent)
   sender.ts             Sender interface; RpcSender = sendRawTransaction(skipPreflight, maxRetries 0) +
                         own rebroadcast loop until confirmed / failed / blockhash expiry. (Jito: add another Sender.)
   engine.ts             ArbEngine.tick(): refresh → optimize both → build → sim → final sim → [live] send → realize
@@ -112,12 +129,61 @@ src/engine/
   setup.ts              one-time ATA creation (Token + Token-2022) and SOL wrap, gated by CONFIRM
 ```
 
+src/feeds/              optional ERPC infrastructure, all env-driven (src/feeds/index.ts wires it)
+  grpc.ts               GrpcProvider: Yellowstone account+slot subscription for the union of all sources' accounts()
+                        (venues + user ATAs). Store ordered by (slot, write_version); seeded by RPC on every
+                        (re)connect and for accounts added later (bin arrays → resubscribe on the live stream).
+                        Per-slot debounce → ChangeSignal → event-driven main loop. Ping keepalive, reconnect with
+                        backoff; stale/disconnected/unseeded → falls back to the PollingProvider (StateManager).
+  shreds.ts             ShredStream SubscribeEntries client + Vec<Entry> decoder (legacy, v0, v1 txs; Alpenglow
+                        markers skipped). Flags txs touching the RISE program, the pool or its reserves; logs them,
+                        wakes the engine, feeds PendingActivity (optional hold rule). Never used as state.
+  http.ts               keep-alive undici fetch for RPC_URL / SEND_RPC_URL
+  signal.ts             ChangeSignal (coalescing wake-up)
+
+## Running on the ERPC VPS
+
+Run the bot on the ERPC VPS, in the same region as your ERPC RPC, Geyser gRPC and Shreds endpoints. Co-location keeps
+the path from Geyser update to decision to sent tx short. All three ERPC services are optional and independent:
+
+| service | env | effect |
+|---|---|---|
+| ERPC RPC / SWQoS | `RPC_URL`, `SEND_RPC_URL` | reads/sims on `RPC_URL`; txs sent (and rebroadcast until expiry) to `SEND_RPC_URL` over a warm keep-alive connection |
+| ERPC Geyser gRPC | `GRPC_ENDPOINT`, `GRPC_X_TOKEN` | streamed account state instead of per-tick polling; the loop re-optimizes on each relevant update |
+| ERPC Shreds | `SHREDSTREAM_ENDPOINT` | early view of pending competing arbs and pool swaps (logged; optional hold) |
+
+Without them the bot behaves exactly as before: it polls `RPC_URL` every `POLL_INTERVAL_MS`.
+
+```bash
+# on the VPS (Node 22)
+sudo useradd --system --create-home --home-dir /opt/rise-arb arb
+sudo -u arb git clone <your repo> /opt/rise-arb/app && cd /opt/rise-arb/app/bot && sudo -u arb npm ci
+sudo install -d -m 0750 -o root -g arb /etc/rise-arb
+sudo install -m 0640 -o root -g arb deploy/.env.example /etc/rise-arb/bot.env   # fill in your ERPC endpoints/tokens
+sudo -u arb mkdir -p data
+sudo install -m 0644 deploy/rise-arb.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now rise-arb
+journalctl -u rise-arb -f
+```
+
+- **`MODE` defaults to `simulate`.** The service paper-trades until you set `MODE=live`, `KEYPAIR_PATH` (e.g.
+  `/etc/rise-arb/bot.keypair.json`, mode 0440 root:arb) and `CONFIRM_LIVE=yes` in `/etc/rise-arb/bot.env`.
+- The unit runs `node --import tsx` directly, so SIGTERM reaches the bot. It finishes the current tick and any in-flight
+  tx (`TimeoutStopSec=150`). It restarts only on crashes. A clean stop, such as the session loss limit, stays stopped.
+- Check at startup: the `infra:` log line and the `start` ledger row show which feeds are active. Tokens and URL paths
+  are redacted.
+- Health: `grpc feed healthy` / `grpc feed not usable … RPC polling` log lines mark the fallback transitions. Shred
+  hits are logged as `[shred <slot>] pending arb|pool-swap|rise …` with the competitor's fee payer and priority fee.
+- Latency: opportunity, final simulation, hold and outcome rows carry `latency` = {source, trigger, queueMs, refreshMs,
+  decisionMs, simulatedMs, sentMs}. All values except refreshMs are measured from the moment the update was received.
+  A `latency` summary row (p50/p90/max update→decision, ticks by source) is written every `LATENCY_SUMMARY_MS`.
+
 ### Ledger and realized PnL
 
 `data/ledger.jsonl` gets one JSON object per event:
 
 - `start`, `opportunity` (the plan), `simulation` (stage `pre` and `final`, with reasons), `submission`,
-  `outcome`, `error`, `stop`.
+  `outcome`, `error`, `stop`, `hold` (competing-arb hold, opt-in), `latency` (periodic summary).
 - Bigints are stored as decimal strings.
 
 Outcomes always come from the landed transaction (`getTransaction`):

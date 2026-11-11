@@ -450,6 +450,8 @@ export class ShredFeed {
   lastSlot = -1;
   private stream: EntriesStream | null = null;
   private gen = 0;
+  /** Consecutive failures since the last stream that delivered data (log throttling). */
+  private fails = 0;
   private backoff: number;
   private lastMsgAt = 0;
   private watchdog: ReturnType<typeof setInterval> | null = null;
@@ -494,12 +496,12 @@ export class ShredFeed {
       let got = false;
       s.on("data", (m: Buffer) => {
         if (gen !== this.gen) return;
-        if (!got) { got = true; this.backoff = this.o.reconnectMinMs ?? 250; }
+        if (!got) { got = true; this.backoff = this.o.reconnectMinMs ?? 250; this.fails = 0; this.log("shredstream receiving entries"); }
         this.onMessage(m);
       });
       s.on("error", (e: Error) => this.down(gen, `error: ${e.message}`));
       s.on("end", () => this.down(gen, "end"));
-      this.log("shredstream connected");
+      if (this.stats.reconnects === 0) this.log("shredstream subscribed");
     } catch (e) {
       this.down(gen, `connect failed: ${(e as Error).message}`);
     }
@@ -507,7 +509,8 @@ export class ShredFeed {
 
   private down(gen: number, why: string) {
     if (gen !== this.gen || this.status === "closed" || this.reconnectTimer) return;
-    this.log(`shredstream down (${why}); reconnecting`);
+    const n = ++this.fails;
+    if (n <= 3 || (n & (n - 1)) === 0) this.log(`shredstream down (${why}); reconnecting (attempt ${n})`);
     this.status = "disconnected";
     try { this.stream?.cancel(); } catch { /* ignore */ }
     this.stream = null;

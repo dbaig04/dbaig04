@@ -202,6 +202,7 @@ export class GrpcProvider implements StateProvider {
   private stream: GeyserStream | null = null;
   private gen = 0;
   private gotData = false;
+  private fails = 0;
   private backoffMs: number;
   private lastMsgAt = -Infinity;
   private subscribed = new Set<string>();
@@ -282,7 +283,8 @@ export class GrpcProvider implements StateProvider {
     try {
       stream = await this.o.connect();
     } catch (e) {
-      this.log(`grpc connect failed: ${(e as Error).message}`);
+      const n = ++this.fails;
+      if (n <= 3 || (n & (n - 1)) === 0) this.log(`grpc connect failed (attempt ${n}): ${(e as Error).message}`);
       this.scheduleReconnect(gen);
       return;
     }
@@ -332,7 +334,7 @@ export class GrpcProvider implements StateProvider {
     try { s?.destroy(); } catch { /* ignore */ }
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = null;
-    if (this.gotData) this.backoffMs = this.o.reconnectMinMs; // the stream worked: reset backoff
+    if (this.gotData) { this.backoffMs = this.o.reconnectMinMs; this.fails = 0; } // the stream worked: reset backoff
     this.scheduleReconnect(gen);
   }
 
