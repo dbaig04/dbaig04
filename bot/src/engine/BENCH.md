@@ -110,3 +110,21 @@ and simulates the best plan every tick, even below the floor, to measure build t
   `getSlot` through this proxy, at about 55–150 ms.
 - **A full tick with an opportunity on mainnet.** Not observed during the runs. The synthetic "perturbed" modes stand
   in for it, using real pool math through `applySwap`.
+
+## ERPC VPS run (Frankfurt, 2026-11-11, simulate mode, no sends)
+
+Setup: ERPC VPS, ERPC Geyser gRPC (confirmed) for state, ERPC Shreds UDP forwarding (port 20000, 2 source IPs), public mainnet RPC for simulation/sending. Short session; the user shut the VPS down afterwards.
+
+**Shreds (UDP), 6 one-minute summaries — measured:**
+- 4,350–6,450 packets/s, 0 invalid, 0 foreign-source, ~278 slots/min (full coverage).
+- 95k–121k transactions decoded per minute; incomplete batches 0–1/min; unrecoverable FEC sets 0.
+- ~85% of batches completed via Reed–Solomon recovery (recovery fires as soon as 32 of 64 shards of a FEC set are present).
+- 1 pending RISE transaction from another wallet detected, 2.0 ms after the first shred of its batch (n=1).
+- This is the first validation of the parser, deshredder, erasure recovery and v1 transaction decoding on real (non-synthetic) shreds.
+
+**gRPC update → decision, 60 s `bench.ts live` — measured, but n=3:**
+- Only 3 ticks: the RISE market and pool accounts changed twice over gRPC in that minute (plus 1 startup RPC tick).
+- data received → decision: 20.5 ms median, 159 ms max (the max includes cold start: worker spawn and fast-grid build). No opportunity, so no tx was built and no simulation ran.
+- n=3 is too small for a meaningful p95. The offline replay (12.1 / 17.7–22.2 ms worst case update → tx built) remains the best estimate of steady-state decision cost.
+
+**Not measured on the VPS:** tx build and simulation RTT (no opportunity in the window), gRPC network latency from the validator (would need slot-timestamp comparison), submission and landing (no live sends).
