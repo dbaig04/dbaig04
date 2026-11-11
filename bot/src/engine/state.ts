@@ -14,8 +14,33 @@ export interface RefreshResult {
   updated: boolean;
 }
 
-export class StateManager {
+/**
+ * Where the engine's account snapshots come from. PollingProvider (= StateManager)
+ * polls RPC each tick; GrpcProvider (src/feeds/grpc.ts) keeps a Geyser-streamed
+ * store and falls back to polling when the stream is stale or not configured.
+ */
+export interface StateProvider {
+  readonly name: string;
+  lastSlot: number;
+  /** Feed every source a snapshot if anything changed since the last call. */
+  refresh(): Promise<RefreshResult>;
+  /** performance.now() at which the newest data in the last snapshot was received (latency accounting). */
+  readonly lastUpdateAt?: number;
+  /** Which path produced the last snapshot (e.g. "rpc", "grpc", "grpc-fallback-rpc"). */
+  readonly lastSource?: string;
+  /**
+   * Event-driven loop support: resolve when new state may be available, or after
+   * timeoutMs. Providers without a push feed simply sleep.
+   */
+  waitForChange?(timeoutMs: number): Promise<string>;
+  close?(): void;
+}
+
+export class StateManager implements StateProvider {
+  readonly name: string = "rpc-poll";
   lastSlot = -1;
+  lastUpdateAt?: number;
+  lastSource?: string;
   /** Max rounds per tick when a source's accounts() grows after an update (e.g. bin arrays). */
   maxRounds = 3;
 
@@ -70,9 +95,24 @@ export class StateManager {
       ({ slot, infos } = await this.fetch(keys, slot));
     }
     this.lastSlot = slot;
+    this.lastUpdateAt = performance.now();
+    this.lastSource = "rpc";
     return { slot, updated: true };
   }
+
+  /** The source list (shared with providers that wrap this one, e.g. GrpcProvider). */
+  get stateSources(): readonly StateSource[] {
+    return this.sources;
+  }
+
+  /** Union of every source's accounts() (deduped). */
+  wantedAccounts(): PublicKey[] {
+    return this.union();
+  }
 }
+
+/** The existing per-tick RPC polling provider. */
+export { StateManager as PollingProvider };
 
 /** Decode the u64 `amount` of an SPL Token / Token-2022 account (same base layout). */
 export function decodeTokenAmount(data: Buffer | Uint8Array): bigint {

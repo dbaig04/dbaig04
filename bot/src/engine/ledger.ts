@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 import type { Connection } from "@solana/web3.js";
 import { DLMM_PROGRAM_ID, RISE_PROGRAM_ID, type Direction } from "../types.js";
 
-export type LedgerEventType = "start" | "stop" | "opportunity" | "simulation" | "submission" | "outcome" | "error";
+export type LedgerEventType = "start" | "stop" | "opportunity" | "simulation" | "submission" | "outcome" | "error" | "latency" | "hold";
 
 export interface LedgerEvent {
   ts: string;

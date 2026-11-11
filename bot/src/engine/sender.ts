@@ -1,7 +1,8 @@
 // Tx delivery. One implementation: plain RPC sendTransaction with
 // skipPreflight (we already simulated), maxRetries 0, and our own rebroadcast
-// loop until confirmation or blockhash expiry. Kept behind `Sender` so another
-// delivery path (e.g. a Jito bundle sender) can be added later.
+// loop until confirmation or blockhash expiry. sendRawTransaction can go to a
+// separate endpoint (SEND_RPC_URL, e.g. ERPC SWQoS) while statuses are polled on
+// the read RPC.
 import type { Commitment, Connection, TransactionError, VersionedTransaction } from "@solana/web3.js";
 import bs58 from "bs58";
 
@@ -14,6 +15,8 @@ export interface SendResult {
   err?: TransactionError | null;
   slot?: number;
   broadcasts: number;
+  /** performance.now() when the first sendRawTransaction was accepted (latency accounting). */
+  firstSentAt?: number;
 }
 
 export interface Sender {
@@ -25,6 +28,11 @@ export interface Sender {
 export type SenderConnection = Pick<Connection, "sendRawTransaction" | "getSignatureStatuses" | "getBlockHeight">;
 
 export interface RpcSenderOptions {
+  /**
+   * Where sendRawTransaction goes (e.g. ERPC's SWQoS endpoint, SEND_RPC_URL). Status
+   * and block-height polling stay on the main (read) connection. Defaults to it.
+   */
+  sendConn?: Pick<Connection, "sendRawTransaction">;
   rebroadcastMs?: number;
   pollMs?: number;
   commitment?: Commitment;
@@ -45,6 +53,12 @@ export class RpcSender implements Sender {
   constructor(private conn: SenderConnection, private o: RpcSenderOptions = {}) {}
 
   async send(tx: VersionedTransaction, lastValidBlockHeight: number): Promise<SendResult> {
+    const meta: { firstSentAt?: number } = {};
+    const r = await this.sendInner(tx, lastValidBlockHeight, meta);
+    return meta.firstSentAt === undefined ? r : { ...r, firstSentAt: meta.firstSentAt };
+  }
+
+  private async sendInner(tx: VersionedTransaction, lastValidBlockHeight: number, meta: { firstSentAt?: number }): Promise<SendResult> {
     const sleep = this.o.sleep ?? defaultSleep;
     const rebroadcastMs = this.o.rebroadcastMs ?? 2000;
     const pollMs = this.o.pollMs ?? 400;
@@ -52,10 +66,12 @@ export class RpcSender implements Sender {
     const signature = signatureOf(tx);
     const raw = tx.serialize();
     let broadcasts = 0;
+    const sendConn = this.o.sendConn ?? this.conn;
     const broadcast = async () => {
       try {
-        await this.conn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 });
+        await sendConn.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 0 });
         broadcasts++;
+        meta.firstSentAt ??= performance.now();
       } catch (e) {
         this.o.log?.(`sendRawTransaction error (will retry): ${(e as Error).message}`);
       }
