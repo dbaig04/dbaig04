@@ -9,8 +9,12 @@ export interface LatencyMarks {
   tickStart: number;
   refreshed?: number;
   decided?: number;
+  /** Final tx (after the pre-sim, if any) built and prepared. */
+  finalBuilt?: number;
   /** Ready-to-simulate/send tx built (blockhash from cache, CU limit, signed in live mode). */
   built?: number;
+  /** Pre-simulation (CU measurement) returned. */
+  preSimulated?: number;
   /** When the provider received the snapshot data (poll: RPC response arrival, which is after tickStart). */
   dataAt?: number;
   /** Time spent in the sources' update() for this snapshot. */
@@ -33,6 +37,9 @@ export interface LatencyRecord {
   builtMs?: number;
   /** Ingest (sources' update()) and data-arrival -> decision / -> ready tx (excludes the RPC fetch when polling). */
   ingestMs?: number;
+  /** ready tx built -> pre-sim / final sim returned (RPC round trips). */
+  preSimRttMs?: number;
+  finalSimRttMs?: number;
   dataToDecisionMs?: number;
   dataToBuiltMs?: number;
   simulatedMs?: number;
@@ -51,6 +58,8 @@ export function latencyRecord(slot: number, source: string, status: string, m: L
     builtMs: rel(m.built),
     ingestMs: m.ingestMs === undefined ? undefined : r1(m.ingestMs),
     dataToDecisionMs: m.dataAt === undefined || m.decided === undefined ? undefined : r1(m.decided - m.dataAt),
+    preSimRttMs: m.preSimulated === undefined || m.built === undefined ? undefined : r1(m.preSimulated - m.built),
+    finalSimRttMs: m.simulated === undefined || m.finalBuilt === undefined ? undefined : r1(m.simulated - m.finalBuilt),
     dataToBuiltMs: m.dataAt === undefined || m.built === undefined ? undefined : r1(m.built - m.dataAt),
     simulatedMs: rel(m.simulated),
     sentMs: rel(m.sent),

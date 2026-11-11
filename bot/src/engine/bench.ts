@@ -325,9 +325,8 @@ export function summarizeLedger(file: string) {
   row("data received -> decision", by("dataToDecisionMs"));
   row("data received -> tx built", by("dataToBuiltMs"));
   row("tick start -> decision (old metric)", by("decisionMs"));
-  // simulation RTT: final-sim latency minus build mark
-  const simRtt = ticks.filter((r) => typeof r.simulatedMs === "number" && typeof r.builtMs === "number").map((r) => (r.simulatedMs as number) - (r.builtMs as number));
-  row("tx built -> sim(s) done (RPC RTT)", simRtt);
+  row("pre-sim RTT (simulateTransaction)", by("preSimRttMs"));
+  row("final-sim RTT (simulateTransaction)", by("finalSimRttMs"));
   const sims = rows.filter((r) => r.type === "simulation");
   const reasons: Record<string, number> = {};
   for (const s of sims) { const k = s.ok ? "ok" : String(s.reason ?? "").replace(/-?\d+/g, "N").slice(0, 60); reasons[`${s.stage}:${k}`] = (reasons[`${s.stage}:${k}`] ?? 0) + 1; }

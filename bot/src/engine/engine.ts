@@ -278,6 +278,7 @@ export class ArbEngine {
       const simTx = buildArbTx(plan, this.d, { ...base, cuLimit: SIM_CU });
       marks.built = performance.now();
       sim = await simulateArb(this.d.conn, simTx.tx, plan, { ...simBase, feeForUnits: (u: number) => { const cuLimit = cuFromSim(u, cfg.cuHeadroomBps); return { cuLimit, fee: feeFor(cuLimit) }; } });
+      marks.preSimulated = performance.now();
       ledger.append("simulation", { slot, stage: "pre", direction: plan.direction, ...simRecord(sim) });
       if (!sim.ok) {
         this.log(`[${slot}] sim rejected: ${sim.reason}`);
@@ -295,6 +296,7 @@ export class ArbEngine {
     const tipLamports = prepared.tipLamports;
     const builtAt = performance.now();
     if (learned) marks.built = builtAt;
+    marks.finalBuilt = builtAt;
     // the final sim judges the exact final message at its exact fee
     const sim2 = await simulateArb(this.d.conn, final.tx, plan, { ...simBase, feeForUnits: () => ({ cuLimit: final.cuLimit, fee: final.feeLamports }) });
     marks.simulated = performance.now();
