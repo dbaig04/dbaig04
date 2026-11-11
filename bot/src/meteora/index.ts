@@ -79,6 +79,13 @@ export interface MeteoraDlmmOptions {
   hostFeeRebate?: boolean;
 }
 
+interface BinTrace {
+  ai: number;
+  j: number;
+  toBin: bigint;
+  fromBin: bigint;
+}
+
 const SWAP2_DISC = Buffer.from("414b3f4ceb5b5b88", "hex");
 const SWAP_EXACT_OUT2_DISC = Buffer.from("2bd7f784893cf351", "hex");
 const RISE = new PublicKey(RISE_MINT);
@@ -176,7 +183,7 @@ export class MeteoraDlmm implements DlmmVenue {
    * Core loop. mode "in": `amount` is fee-excluded-of-transfer-fee input; "out": desired output (gross of transfer fee).
    * Returns null when the cached bin arrays cannot cover the trade.
    */
-  private run(swapForY: boolean, mode: "in" | "out", amount: bigint) {
+  private run(swapForY: boolean, mode: "in" | "out", amount: bigint, trace?: BinTrace[]) {
     const lb = this.checkTradable();
     if (!lb || amount <= 0n) return null;
     const s = lb.s;
@@ -237,6 +244,7 @@ export class MeteoraDlmm implements DlmmVenue {
             if (this.opts.hostFeeRebate) hostFee += (r.protocolFee * HOST_FEE_BPS) / BASIS_POINT_MAX;
             lastRate = rate;
             endBinId = activeId;
+            trace?.push({ ai, j: activeId - lower, toBin: r.amountIn - r.fee, fromBin: r.binOut ?? r.amountOut });
           }
         }
         if (left === 0n) break;
@@ -254,7 +262,7 @@ export class MeteoraDlmm implements DlmmVenue {
       if (extra-- <= 0) break;
       keys.push(binArrayPda(i));
     }
-    return { totalIn, totalOut, fee, protocolFee: protocolFee - hostFee, hostFee, endBinId, lastRate, keys };
+    return { totalIn, totalOut, fee, protocolFee: protocolFee - hostFee, hostFee, endBinId, lastRate, keys, finalActiveId: activeId, v };
   }
 
   quoteExactIn(side: Side, amountIn: bigint): ExactInQuote | null {
@@ -298,6 +306,54 @@ export class MeteoraDlmm implements DlmmVenue {
   private hostFeeToUserIsNet(side: Side): boolean {
     const lb = this.lbPair!;
     return this.opts.hostFeeRebate && this.feeOnInput(lb, side === "sellRise");
+  }
+
+  /**
+   * Advance the cached state as if the swap executed now (bins, active id, volatility params,
+   * last_update_timestamp). Useful for quoting a second swap in the same slot/tx. Verified against
+   * simulated post-state for MM liquidity; limit-order bookkeeping is not modelled (returns false if
+   * the swap touched limit-order liquidity, in which case the state is left unchanged).
+   */
+  applySwap(side: Side, mode: "exactIn" | "exactOut", amount: bigint): boolean {
+    const swapForY = side === "sellRise";
+    const trace: BinTrace[] = [];
+    const epoch = this.clock?.epoch ?? 0n;
+    const [inMint, outMint] = swapForY ? [this.mintX, this.mintY] : [this.mintY, this.mintX];
+    const r =
+      mode === "exactIn"
+        ? this.run(swapForY, "in", transferFeeExcluded(inMint, epoch, amount), trace)
+        : this.run(swapForY, "out", transferFeeIncluded(outMint, epoch, amount), trace);
+    if (!r) return false;
+    const next = new Map(this.binArrays);
+    for (const t of trace) {
+      const ba0 = next.get(t.ai)!;
+      const ba = ba0 === this.binArrays.get(t.ai) ? { ...ba0, bins: ba0.bins.slice() } : ba0;
+      const b = { ...ba.bins[t.j] };
+      const mm = swapForY ? b.amountY : b.amountX;
+      if (t.fromBin > mm) return false; // limit-order liquidity consumed: not modelled
+      if (swapForY) {
+        b.amountX += t.toBin;
+        b.amountY -= t.fromBin;
+      } else {
+        b.amountY += t.toBin;
+        b.amountX -= t.fromBin;
+      }
+      ba.bins[t.j] = b;
+      next.set(t.ai, ba);
+    }
+    const lb = this.lbPair!;
+    this.lbPair = {
+      ...lb,
+      activeId: r.finalActiveId,
+      v: {
+        volatilityAccumulator: r.v.volatilityAccumulator,
+        volatilityReference: r.v.volatilityReference,
+        indexReference: r.v.indexReference,
+        lastUpdateTimestamp: this.clock!.unixTimestamp,
+      },
+    };
+    this.binArrays = next;
+    return true;
   }
 
   // ---------------- instructions ----------------

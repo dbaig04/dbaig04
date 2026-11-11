@@ -127,6 +127,8 @@ export interface BinSwapResult {
   amountOut: bigint; // fee-exclusive output delivered
   fee: bigint; // total trading fee
   protocolFee: bigint; // protocol share (before host split)
+  /** output actually leaving the bin's liquidity (exact-out can round a little above amountOut) */
+  binOut?: bigint;
 }
 
 /** swapExactInQuoteAtBin */
@@ -204,7 +206,7 @@ export function swapExactOutAtBin(b: BinView, rate: bigint, protocolShare: bigin
   const r = swapExactInAtBin(b, rate, protocolShare, inclIn, swapForY, feeOnInput);
   // NOTE: the SDK adds (quotedOut - outAmount) to protocolFee here (mixing output-token units into an
   // input-token fee). The program does not: simulated host fees match only without it.
-  return { amountIn: r.amountIn, amountOut: outAmount, fee: r.fee, protocolFee: r.protocolFee };
+  return { amountIn: r.amountIn, amountOut: outAmount, fee: r.fee, protocolFee: r.protocolFee, binOut: r.amountOut };
 }
 
 // ---- Token-2022 transfer fee (epoch-dependent) ----

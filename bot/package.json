@@ -17,7 +17,8 @@
     "@solana/web3.js": "^1.99.0",
     "bn.js": "^5.2.5",
     "bs58": "^6.0.0",
-    "decimal.js": "^10.6.0"
+    "decimal.js": "^10.6.0",
+    "litesvm": "0.8.0"
   },
   "devDependencies": {
     "@types/bn.js": "^5.2.0",

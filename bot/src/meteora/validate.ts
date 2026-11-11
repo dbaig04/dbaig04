@@ -21,8 +21,8 @@ import { gzipSync } from "node:zlib";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { MeteoraDlmm, Side } from "./index.js";
 import { getMultipleAccounts, rpc } from "./rpc.js";
-import { decodeClock, decodeTokenAmount } from "./layout.js";
-import { SYSVAR_CLOCK, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, ata } from "./pda.js";
+import { ClockState, decodeBinArray, decodeClock, decodeLbPair, decodeTokenAmount } from "./layout.js";
+import { POOL, SYSVAR_CLOCK, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, ata } from "./pda.js";
 import { RISE_MINT, WSOL_MINT } from "../types.js";
 
 const RISE = new PublicKey(RISE_MINT);
@@ -46,7 +46,7 @@ const cases: Case[] = [
   // buyRise exact-in: lamports in
   ...[1_000_000n, SOL / 10n, SOL, 5n * SOL, 25n * SOL, 100n * SOL, 200n * SOL].map((amount) => ({ side: "buyRise" as Side, mode: "exactIn" as const, amount })),
   // buyRise exact-out: RISE out
-  ...[10n, 1_000n, 10_000n, 100_000n, 1_000_000n].map((r) => ({ side: "buyRise" as Side, mode: "exactOut" as const, amount: r * RISE_UNIT + 123_456_789n })),
+  ...[10n, 1_000n, 10_000n, 100_000n, 150_000n].map((r) => ({ side: "buyRise" as Side, mode: "exactOut" as const, amount: r * RISE_UNIT + 123_456_789n })),
   // sellRise exact-in: RISE in
   ...[1n, 100n, 1_000n, 10_000n, 30_000n, 57_000n].map((r) => ({ side: "sellRise" as Side, mode: "exactIn" as const, amount: r * RISE_UNIT + 987_654_321n })),
   // sellRise exact-out: lamports out
@@ -112,6 +112,90 @@ function quoteFor(venue: MeteoraDlmm, c: Case) {
 
 const fmt = (x: bigint) => x.toString();
 
+/** leg A: buyRise exact-in solIn; leg B: sellRise exact-in (A.out / frac) RISE. Same tx, REF wallet. */
+async function twoLeg(venue: MeteoraDlmm, solIn: bigint, frac: bigint) {
+  const user = REF;
+  const userRise = ata(user, RISE, TOKEN_2022_PROGRAM);
+  const userWsol = ata(user, WSOL, TOKEN_PROGRAM);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const pre = await snapshot(venue, [userRise, userWsol]);
+    const qA0 = venue.quoteExactIn("buyRise", solIn);
+    if (!qA0) return null;
+    const riseB = qA0.out / frac;
+    const legsFor = (clock: ClockState | null) => {
+      const v2 = new MeteoraDlmm();
+      v2.update(pre.slot, pre.infos);
+      if (clock) v2.clock = clock;
+      const qA = v2.quoteExactIn("buyRise", solIn)!;
+      if (!v2.applySwap("buyRise", "exactIn", solIn)) throw new Error("applySwap failed");
+      const qB = v2.quoteExactIn("sellRise", riseB)!;
+      v2.applySwap("sellRise", "exactIn", riseB);
+      return { qA, qB, v2 };
+    };
+    const { qA: a0, qB: b0 } = legsFor(null);
+    const touched = [...new Set([...a0.binArrays, ...b0.binArrays].map((k) => k.toBase58()))];
+    const ixs = [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
+      venue.swapExactInIx(user, "buyRise", solIn, a0.out, a0.binArrays),
+      venue.swapExactInIx(user, "sellRise", riseB, b0.out, b0.binArrays),
+    ];
+    const tx = new VersionedTransaction(new TransactionMessage({ payerKey: user, recentBlockhash: PublicKey.default.toBase58(), instructions: ixs }).compileToV0Message());
+    const sim: any = await rpc("simulateTransaction", [
+      Buffer.from(tx.serialize()).toString("base64"),
+      {
+        encoding: "base64",
+        sigVerify: false,
+        replaceRecentBlockhash: true,
+        commitment: "confirmed",
+        accounts: { encoding: "base64", addresses: [userRise.toBase58(), userWsol.toBase58(), SYSVAR_CLOCK.toBase58(), POOL.toBase58(), ...touched] },
+      },
+    ]);
+    const post = await getMultipleAccounts([...venue.accounts(), userRise, userWsol]);
+    const stable = [...venue.accounts().filter((k) => !k.equals(SYSVAR_CLOCK)), userRise, userWsol].every((k) => sameData(pre.infos.get(k.toBase58()), post.infos.get(k.toBase58())));
+    if (!stable) continue;
+    const v = sim.value;
+    if (v.err) return { side: "twoLeg", mode: `buy ${solIn} then sell 1/${frac}`, amount: solIn, simErr: JSON.stringify(v.err), logs: v.logs?.slice(-5) };
+    const simClock = decodeClock(Buffer.from(v.accounts[2].data[0], "base64"));
+    const { qA, qB, v2 } = legsFor(simClock);
+    const dRise = decodeTokenAmount(Buffer.from(v.accounts[0].data[0], "base64")) - decodeTokenAmount(pre.infos.get(userRise.toBase58())!.data);
+    const dWsol = decodeTokenAmount(Buffer.from(v.accounts[1].data[0], "base64")) - decodeTokenAmount(pre.infos.get(userWsol.toBase58())!.data);
+    const qRise = qA.out - qB.netIn;
+    const qWsol = qB.out - qA.netIn;
+    // compare modelled post-state vs simulated post-state
+    const simLb = decodeLbPair(Buffer.from(v.accounts[3].data[0], "base64"));
+    const mine = v2.lbPair!;
+    let binMismatch = 0;
+    touched.forEach((k, i) => {
+      const sb = decodeBinArray(Buffer.from(v.accounts[4 + i].data[0], "base64"));
+      const mb = v2.binArrays.get(sb.index)!;
+      sb.bins.forEach((b, j) => {
+        if (b.amountX !== mb.bins[j].amountX || b.amountY !== mb.bins[j].amountY) binMismatch++;
+      });
+    });
+    const stateMatch =
+      simLb.activeId === mine.activeId &&
+      simLb.v.volatilityAccumulator === mine.v.volatilityAccumulator &&
+      simLb.v.volatilityReference === mine.v.volatilityReference &&
+      simLb.v.indexReference === mine.v.indexReference &&
+      simLb.v.lastUpdateTimestamp === mine.v.lastUpdateTimestamp &&
+      binMismatch === 0;
+    return {
+      side: "twoLeg",
+      mode: `buy ${solIn} then sell 1/${frac}`,
+      amount: solIn,
+      slot: sim.context.slot,
+      quoteNetIn: `dRise ${qRise}`,
+      simNetIn: `dRise ${dRise}`,
+      quoteOut: `dWsol ${qWsol}`,
+      simOut: `dWsol ${dWsol}`,
+      bins: `A->${qA.endBinId} B->${qB.endBinId}`,
+      postState: { sim: { active: simLb.activeId, ...simLb.v }, model: { active: mine.activeId, ...mine.v }, binMismatch },
+      match: dRise === qRise && dWsol === qWsol && stateMatch,
+    };
+  }
+  return null;
+}
+
 async function main() {
   const writeFixtures = process.argv.includes("--write-fixtures");
   const venue = new MeteoraDlmm();
@@ -122,7 +206,7 @@ async function main() {
     !!fixtureSnap &&
     venue
       .accounts()
-      .filter((k) => !k.equals(SYSVAR_CLOCK))
+      .filter((k) => !k.equals(SYSVAR_CLOCK) && fixtureSnap!.infos[k.toBase58()] !== undefined)
       .every((k) => fixtureSnap!.infos[k.toBase58()] === infos.get(k.toBase58())?.data.toString("base64"));
 
   for (const c of cases) {
@@ -215,7 +299,13 @@ async function main() {
         };
         if (writeFixtures && row.match) {
           if (!fixtureSnap) {
-            const keep = venue.accounts();
+            // keep the fixture small: lb_pair, clock, mint + bin arrays within +-3 of the active array
+            const activeIdx = Math.floor(venue.lbPair!.activeId / 70);
+            const keep = venue.accounts().filter((k) => {
+              const a = pre.infos.get(k.toBase58());
+              if (!a || a.data.length !== 10136) return true;
+              return Math.abs(Number(a.data.readBigInt64LE(8)) - activeIdx) <= 3;
+            });
             const infos: Record<string, string> = {};
             for (const k of keep) {
               const a = pre.infos.get(k.toBase58());
@@ -223,7 +313,7 @@ async function main() {
             }
             fixtureSnap = { slot: pre.slot, infos };
           }
-          if (sameAsFixture(pre.infos) && clkData)
+          if (sameAsFixture(pre.infos) && clkData && q.end >= (Math.floor(venue.lbPair!.activeId / 70) - 3) * 70 && q.end < (Math.floor(venue.lbPair!.activeId / 70) + 4) * 70)
             fixtureCases.push({ side: c.side, mode: c.mode, amount: fmt(c.amount), inGross: fmt(q.inGross), netIn: fmt(q.netIn), out: fmt(q.out), hostFee: fmt(q.hostFee), simSlot: sim.context.slot, clock: clkData.toString("base64") });
         }
       }
@@ -232,6 +322,18 @@ async function main() {
     if (!row) row = { ...c, note: "state kept changing; not scored" };
     rows.push(row);
     console.log(JSON.stringify(row, (_k, val) => (typeof val === "bigint" ? val.toString() : val)));
+  }
+
+  // ---- two swaps in one tx: verifies applySwap() (post-state) and the "elapsed < filter_period" branch
+  for (const [solIn, frac] of [
+    [5n * SOL, 2n],
+    [40n * SOL, 1n],
+  ] as const) {
+    const rows2 = await twoLeg(venue, solIn, frac);
+    if (rows2) {
+      rows.push(rows2);
+      console.log(JSON.stringify(rows2, (_k, val) => (typeof val === "bigint" ? val.toString() : val)));
+    }
   }
 
   // latency
