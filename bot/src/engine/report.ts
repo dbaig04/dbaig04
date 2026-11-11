@@ -1,5 +1,8 @@
 // Realized-PnL report.
-//   npx tsx src/engine/report.ts [--ledger data/ledger.jsonl]
+//   npx tsx src/engine/report.ts [--ledger data/ledger.jsonl] [--days N]
+//     sections (per UTC day and all-time): trading profit, execution costs
+//     (base/priority/tip), failed-attempt costs, net, RISE residue (separate),
+//     reconciliation drift, latency, halts, risk rejections
 //   npx tsx src/engine/report.ts --reference <dir-of-saved-getTransaction-json> [--wallet <pubkey>]
 // The reference mode recomputes the reference wallet's realized PnL from its
 // saved txs (including failed-tx fees) as a sanity check of the ledger math.
@@ -11,7 +14,7 @@ import { getAssociatedTokenAddressSync, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID 
 import bs58 from "bs58";
 import { RISE_MINT, RISE_PROGRAM_ID, WSOL_MINT } from "../types.js";
 import { REFERENCE_WALLET } from "../config.js";
-import { accountKeysOf, analyzeTx, Ledger, outcomeFromEvent, summarize, type OutcomeLike, type PnlSummary, type RawTx } from "./ledger.js";
+import { accountKeysOf, analyzeTx, breakdown, Ledger, summarize, type LedgerEvent, type OutcomeLike, type PnlSummary, type RawTx } from "./ledger.js";
 
 export const SOL = (l: bigint) => {
   const neg = l < 0n, a = neg ? -l : l;
@@ -41,6 +44,84 @@ export function formatSummary(s: PnlSummary, title: string): string {
   L.push(`win rate: ${(s.winRate * 100).toFixed(1)}% (${s.wins}/${s.landed} landed with net > 0)`);
   for (const [k, v] of Object.entries(s.byKind)) L.push(`  ${k.padEnd(14)} n=${v.n} failed=${v.failed} fees=${SOL(v.fees)} net=${SOL(v.net)}`);
   return L.join("\n");
+}
+
+// --- ledger report: separate sections, daily and all-time ---
+
+const STAGES = ["decision", "built", "simulated", "sent", "landed"] as const;
+
+function pct(xs: number[], p: number): number | undefined {
+  if (!xs.length) return undefined;
+  const d = [...xs].sort((a, b) => a - b);
+  return d[Math.min(d.length - 1, Math.floor(p * d.length))];
+}
+
+/** Sections for one set of ledger events (one UTC day, or all-time). */
+export function reportSections(evs: LedgerEvent[], title: string): string {
+  const outs = evs.filter((e) => e.type === "outcome");
+  const b = breakdown(outs);
+  const L: string[] = [];
+  L.push(`==== ${title}`);
+  L.push(`[activity] ${b.submitted} submitted: ${b.landed} landed (${b.succeeded} ok, ${b.failedLanded} failed), ${b.dropped} dropped/expired`);
+  L.push(`[trading]  realized trading profit (before execution costs): ${SOL(b.tradingProfitLamports)} SOL`);
+  L.push(`[costs]    execution costs: ${SOL(b.execCostLamports)} SOL = base ${SOL(b.baseFeeLamports)} + priority ${SOL(b.priorityFeeLamports)} + tip ${SOL(b.tipLamports)}`);
+  L.push(`[failed]   failed-attempt costs (landed failures; dropped/expired cost 0): ${SOL(b.failedCostLamports)} SOL over ${b.failedLanded} txs (${b.dropped} dropped at 0)`);
+  L.push(`[net]      realized SOL net (trading − execution costs): ${SOL(b.netLamports)} SOL`);
+  L.push(`[residual] RISE residue (not in realized SOL): ${b.residualRise} raw units, est. ${SOL(b.residualRiseValueEstLamports)} SOL at trade-time marks`);
+  L.push(`[reconcile] ${b.driftTxs} ok txs reconciled vs final sim; Σ|drift| wSOL ${b.absDrift.wsol}, RISE ${b.absDrift.rise}, native ${b.absDrift.native}`);
+  const lat: Record<string, number[]> = Object.fromEntries(STAGES.map((k) => [k, []]));
+  const slots: number[] = [];
+  for (const o of outs) {
+    const l = o.latencyMs as Record<string, number | undefined> | undefined;
+    if (!l) continue;
+    for (const k of STAGES) if (typeof l[k] === "number") lat[k].push(l[k]!);
+    if (typeof l.slotsToLand === "number") slots.push(l.slotsToLand);
+  }
+  const f = (x?: number) => (x === undefined ? "-" : `${x}`);
+  L.push(`[latency]  ms from update received (p50/p90/max), n=${lat.decision.length}: ` + STAGES.map((k) => `${k} ${f(pct(lat[k], 0.5))}/${f(pct(lat[k], 0.9))}/${f(pct(lat[k], 1))}`).join(", ") + (slots.length ? `; slots to land p50 ${pct(slots, 0.5)}` : ""));
+  const byDelivery = new Map<string, LedgerEvent[]>();
+  for (const o of outs) { const k = String(o.delivery ?? "rpc"); byDelivery.set(k, [...(byDelivery.get(k) ?? []), o]); }
+  if (byDelivery.size) {
+    L.push(`[delivery] ` + [...byDelivery].map(([k, list]) => {
+      const x = breakdown(list);
+      const landed = list.map((o) => (o.latencyMs as Record<string, number> | undefined)?.landed).filter((v): v is number => typeof v === "number");
+      return `${k}: n=${x.submitted} landed ${x.landed} (${x.submitted ? ((100 * x.landed) / x.submitted).toFixed(0) : 0}%) ok ${x.succeeded} cost ${SOL(x.execCostLamports)} net ${SOL(x.netLamports)} landed-latency p50 ${pct(landed, 0.5) ?? "-"} ms`;
+    }).join(" | "));
+  }
+  const halts = evs.filter((e) => e.type === "halt");
+  L.push(`[halts]    ${halts.length}${halts.length ? ": " + halts.map((h) => `${h.ts.slice(11, 19)} ${h.reason} (${String(h.detail ?? "").slice(0, 80)})`).join("; ") : ""}`);
+  const risk = evs.filter((e) => e.type === "risk");
+  if (risk.length) {
+    const m = new Map<string, number>();
+    for (const r of risk) for (const x of (r.reasons as string[]) ?? []) { const k = `${r.stage}: ${x.replace(/\d+/g, "N").slice(0, 70)}`; m.set(k, (m.get(k) ?? 0) + 1); }
+    L.push(`[risk]     ${risk.length} rejections; top: ${[...m].sort((a, c) => c[1] - a[1]).slice(0, 5).map(([k, n]) => `${k} x${n}`).join(" | ")}`);
+  }
+  const rec = evs.filter((e) => e.type === "reconcile");
+  for (const r of rec) {
+    const d = r.drift as { wsol: string; rise: string };
+    L.push(`[startup reconcile] ${r.ts}: drift wSOL ${d.wsol} RISE ${d.rise} (${r.outcomesSince} outcomes since ${r.baselineTs})`);
+  }
+  return L.join("\n");
+}
+
+/** Group events by UTC day (YYYY-MM-DD) of their timestamp. */
+export function byUtcDay(evs: LedgerEvent[]): Map<string, LedgerEvent[]> {
+  const m = new Map<string, LedgerEvent[]>();
+  for (const e of evs) {
+    const d = String(e.ts).slice(0, 10);
+    const a = m.get(d) ?? [];
+    a.push(e);
+    m.set(d, a);
+  }
+  return m;
+}
+
+export function ledgerReport(evs: LedgerEvent[], opts: { days?: number } = {}): string {
+  const parts: string[] = [];
+  const days = [...byUtcDay(evs)].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  for (const [d, list] of days.slice(-(opts.days ?? days.length))) parts.push(reportSections(list, `UTC day ${d}`));
+  parts.push(reportSections(evs, "all-time"));
+  return parts.join("\n\n");
 }
 
 // --- reference-wallet backfill ---
@@ -94,13 +175,14 @@ export function main(args: string[]): void {
   }
   const path = argOf(args, "--ledger") ?? process.env.LEDGER_PATH ?? "data/ledger.jsonl";
   const evs = Ledger.read(path);
-  const outs = evs.filter((e) => e.type === "outcome").map(outcomeFromEvent);
-  console.log(formatSummary(summarize(outs), `ledger ${path}: realized`));
+  const days = argOf(args, "--days");
+  console.log(`ledger ${path}`);
+  console.log(ledgerReport(evs, { days: days ? Number(days) : undefined }));
   const sims = evs.filter((e) => e.type === "simulation");
   const ok = sims.filter((e) => e.ok);
   const paper = ok.reduce((a, e) => a + BigInt((e.simulatedProfit as string) ?? "0"), 0n);
   const opps = evs.filter((e) => e.type === "opportunity").length;
-  console.log(`\nopportunities: ${opps}, simulations: ${sims.length} (${ok.length} passed), submissions: ${evs.filter((e) => e.type === "submission").length}`);
+  console.log(`\n[paper] opportunities: ${opps}, simulations: ${sims.length} (${ok.length} passed), submissions: ${evs.filter((e) => e.type === "submission").length}`);
   console.log(`paper PnL of passing sims (not realized): ${SOL(paper)} SOL`);
   const reasons = new Map<string, number>();
   for (const e of sims.filter((e) => !e.ok)) {

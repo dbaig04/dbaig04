@@ -63,12 +63,26 @@ export function userAtas(user: PublicKey): { wsolAta: PublicKey; riseAta: Public
   return { wsolAta: userWsolAta(user), riseAta: userRiseAta(user) };
 }
 
+// ATA derivation (findProgramAddressSync) costs ~0.1-0.5 ms; ix building is on the hot path.
+const ataCache = new Map<string, { wsol: PublicKey; rise: PublicKey }>();
+function cachedAtas(user: PublicKey, mint: PublicKey): { wsol: PublicKey; rise: PublicKey } {
+  const k = user.toBase58() + mint.toBase58();
+  let a = ataCache.get(k);
+  if (!a) {
+    a = { wsol: userWsolAta(user), rise: userRiseAta(user, mint) };
+    if (ataCache.size > 64) ataCache.clear();
+    ataCache.set(k, a);
+  }
+  return a;
+}
+
 function tradeIx(disc: Buffer, user: PublicKey, a: bigint, b: bigint, acc: RiseAccounts, mint: PublicKey): TransactionInstruction {
   const data = Buffer.alloc(24);
   disc.copy(data, 0);
   data.writeBigUInt64LE(a, 8);
   data.writeBigUInt64LE(b, 16);
   const m = (pubkey: PublicKey, isWritable: boolean, isSigner = false) => ({ pubkey, isWritable, isSigner });
+  const atas = cachedAtas(user, mint);
   return new TransactionInstruction({
     programId: PROGRAM_ID,
     data,
@@ -81,8 +95,8 @@ function tradeIx(disc: Buffer, user: PublicKey, a: bigint, b: bigint, acc: RiseA
       m(acc.reflectionVault, true), // 5 reflection vault (wSOL, owned by market)
       m(mint, true), // 6 RISE mint (Token-2022)
       m(WSOL, false), // 7 wSOL mint
-      m(userWsolAta(user), true), // 8 user wSOL ATA
-      m(userRiseAta(user, mint), true), // 9 user RISE ATA
+      m(atas.wsol, true), // 8 user wSOL ATA
+      m(atas.rise, true), // 9 user RISE ATA
       m(TOKEN_PROGRAM_ID, false), // 10
       m(TOKEN_2022_PROGRAM_ID, false), // 11
       m(ASSOCIATED_TOKEN_PROGRAM_ID, false), // 12

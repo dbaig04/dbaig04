@@ -8,7 +8,7 @@
 //   {op:"state", slot, rent:{lpby,thr,burn}|null, accounts:{addr:{lamports,owner,data(b64),executable}}} -> {ok:true}
 //   {op:"quote", kind:"buy"|"sell", amount:"<u64>"}        -> {out:"<u64>"} | {out:null, err}
 import fs from "node:fs";
-import { LiteSVM, Rent, FailedTransactionMetadata } from "litesvm";
+import { LiteSVM, Rent, FailedTransactionMetadata, SimulatedTransactionInfo } from "litesvm";
 import { Keypair, PublicKey, Transaction, TransactionInstruction, ComputeBudgetProgram, SystemProgram } from "@solana/web3.js";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -94,23 +94,45 @@ function ix(kind, amount) {
   });
 }
 
-function quote(kind, amount) {
+// Pre-serialized quote txs, one per kind: only the u64 amount is patched per quote.
+// Transaction.serialize() (message compile) costs ~1.2 ms, more than the simulation itself
+// (~1 ms); the template brings an exact quote from ~3.3 ms to ~1.1 ms. The synthetic user,
+// accounts and blockhash never change (blockhash check is off), so a template stays valid
+// across fresh() rebuilds and state updates.
+const templates = new Map();
+function template(kind) {
+  let t = templates.get(kind);
+  if (t) return t;
   const tx = new Transaction();
   tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }));
-  tx.add(ix(kind, amount));
+  tx.add(ix(kind, 0n));
   tx.recentBlockhash = svm.latestBlockhash();
   tx.feePayer = user;
+  const bytes = Buffer.from(tx.serialize({ requireAllSignatures: false, verifySignatures: false }));
+  // the RISE ix is last; its data (disc | u64 amount | u64 min) ends the message
+  const off = bytes.length - 16;
+  const disc = Buffer.from(kind === "buy" ? "66063d1201daebea" : "33e685a4017f83ad", "hex");
+  if (!bytes.subarray(off - 8, off).equals(disc)) throw new Error("quote template layout");
+  t = { bytes, off };
+  templates.set(kind, t);
+  return t;
+}
+
+function quote(kind, amount) {
+  const t = template(kind);
+  t.bytes.writeBigUInt64LE(amount, t.off);
   // simulateTransaction never commits, so the loaded snapshot is untouched between quotes.
-  const r = svm.simulateTransaction(tx);
-  if (r instanceof FailedTransactionMetadata) return { out: null, err: String(r.err()) };
+  const raw = svm.inner.simulateLegacyTransaction(t.bytes);
+  if (raw instanceof FailedTransactionMetadata) return { out: null, err: String(raw.err()) };
+  const r = new SimulatedTransactionInfo(raw);
   const post = r.postAccounts();
   const amt = (k) => {
     const e = post.find(([p]) => p.equals(k));
     return e ? Buffer.from(e[1].data()).readBigUInt64LE(64) : null;
   };
-  const w = amt(uw), t = amt(ur);
-  if (w === null || t === null) return { out: null, err: "missing post accounts" };
-  const out = kind === "buy" ? t - RISE_BAL : w - WSOL_BAL;
+  const w = amt(uw), t2 = amt(ur);
+  if (w === null || t2 === null) return { out: null, err: "missing post accounts" };
+  const out = kind === "buy" ? t2 - RISE_BAL : w - WSOL_BAL;
   return { out: out.toString(), cu: Number(r.meta().computeUnitsConsumed()) };
 }
 

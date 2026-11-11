@@ -105,6 +105,13 @@ export class MeteoraDlmm implements DlmmVenue {
   private initializedIdx: number[] = [];
   /** last raw bytes + decoded form per bin array index, to skip re-decoding unchanged arrays */
   private rawCache = new Map<number, { raw: Buffer; ba: BinArrayState }>();
+  private lbRaw: Buffer | null = null;
+  private lbDecoded: LbPairState | null = null;
+  private mintRaw: Buffer | null = null;
+  /** Bumped whenever lb_pair, the RISE mint, a cached bin array or the cached set changes (or applySwap). */
+  stateVersion = 0;
+  /** Per-user ATA cache for instruction building (PDA derivation is ~0.1-0.5 ms each). */
+  private ataCache = new Map<string, { rise: PublicKey; wsol: PublicKey }>();
 
   constructor(opts: MeteoraDlmmOptions = {}) {
     this.opts = { binArrayWindow: 12, extraBinArrays: 1, hostFeeRebate: true, ...opts };
@@ -119,14 +126,22 @@ export class MeteoraDlmm implements DlmmVenue {
   update(slot: number, infos: Map<string, AccountInfo<Buffer> | null>): void {
     const p = infos.get(POOL.toBase58());
     if (!p) throw new Error("DLMM lb_pair missing from snapshot");
-    const lb = decodeLbPair(p.data);
+    const rawChanged = !this.lbRaw || !this.lbRaw.equals(p.data) || !this.lbDecoded;
+    const lb = rawChanged ? decodeLbPair(p.data) : this.lbDecoded!;
     if (!lb.tokenXMint.equals(RISE) || !lb.tokenYMint.equals(WSOL)) throw new Error("unexpected pool mints");
+    if (rawChanged) { this.lbRaw = Buffer.from(p.data); this.lbDecoded = lb; }
+    // also "changed" when the cached lbPair was advanced by applySwap
+    let changed = rawChanged || this.lbPair !== lb;
     this.lbPair = lb;
     this.slot = slot;
     const c = infos.get(SYSVAR_CLOCK.toBase58());
     if (c) this.clock = decodeClock(c.data);
     const m = infos.get(RISE.toBase58());
-    if (m) this.mintX = decodeMint(m.data);
+    if (m && (!this.mintRaw || !this.mintRaw.equals(m.data))) {
+      this.mintX = decodeMint(m.data);
+      this.mintRaw = Buffer.from(m.data);
+      changed = true;
+    }
     this.mintY = null; // wSOL: classic SPL token, no extensions
 
     // initialized bin arrays from the internal bitmap (bit i <-> index i-512)
@@ -152,11 +167,32 @@ export class MeteoraDlmm implements DlmmVenue {
       }
       const ba = decodeBinArray(a.data);
       if (ba.index !== i || !ba.lbPair.equals(POOL)) throw new Error(`bin array ${i} mismatch`);
+      changed = true;
       this.rawCache.set(i, { raw: Buffer.from(a.data), ba });
       next.set(i, ba);
     }
     for (const k of this.rawCache.keys()) if (!next.has(k)) this.rawCache.delete(k);
+    if (next.size !== this.binArrays.size || [...next.keys()].some((k) => next.get(k) !== this.binArrays.get(k))) changed = true;
     this.binArrays = next;
+    if (changed) this.stateVersion++;
+  }
+
+  /**
+   * Key that changes whenever a quote could change: state version + the clock-derived
+   * volatility references (fees depend on the time since the last swap) + epoch (transfer fees).
+   * Equal keys => identical quotes.
+   */
+  quoteKey(): string {
+    const lb = this.lbPair;
+    if (!lb || !this.clock) return `none:${this.stateVersion}`;
+    const v = updateReference(lb.v, lb.s, lb.activeId, this.clock.unixTimestamp);
+    return `${this.stateVersion}:${v.indexReference}:${v.volatilityReference}:${v.volatilityAccumulator}:${this.clock.epoch}`;
+  }
+
+  /** Base (minimum, VA = 0) fee rate, 1e9 precision. The fee rate of any bin is >= this. */
+  baseFeeRate(): bigint | null {
+    const lb = this.lbPair;
+    return lb ? totalFeeRate(lb.binStep, lb.s, 0) : null;
   }
 
   /** True once lb_pair, clock and the bin arrays around the active bin are cached. */
@@ -362,6 +398,7 @@ export class MeteoraDlmm implements DlmmVenue {
       },
     };
     this.binArrays = next;
+    this.stateVersion++;
     return true;
   }
 
@@ -370,8 +407,14 @@ export class MeteoraDlmm implements DlmmVenue {
   private swapKeys(user: PublicKey, side: Side, binArrays: PublicKey[]) {
     const lb = this.lbPair;
     if (!lb) throw new Error("MeteoraDlmm: no state yet");
-    const userRise = ata(user, RISE, TOKEN_2022_PROGRAM);
-    const userWsol = ata(user, WSOL, TOKEN_PROGRAM);
+    const uk = user.toBase58();
+    let a = this.ataCache.get(uk);
+    if (!a) {
+      a = { rise: ata(user, RISE, TOKEN_2022_PROGRAM), wsol: ata(user, WSOL, TOKEN_PROGRAM) };
+      this.ataCache.set(uk, a);
+    }
+    const userRise = a.rise;
+    const userWsol = a.wsol;
     const [tin, tout] = side === "sellRise" ? [userRise, userWsol] : [userWsol, userRise];
     const swapForY = side === "sellRise";
     // host fee is paid in the fee token (input token for InputOnly; Y for OnlyY)

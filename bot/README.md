@@ -53,7 +53,7 @@ MODE=live KEYPAIR_PATH=~/bot.keypair.json CONFIRM_LIVE=yes RPC_URL=https://<your
 | `PROFIT_FLOOR_LAMPORTS` | `100000` | Min net profit after fees. Used by the optimizer, the sim check and the on-chain min-out. |
 | `PRIORITY_FEE_LAMPORTS` | `50000` | Target priority fee per tx. CU price = floor(fee·1e6 / CU limit). |
 | `BASE_FEE_LAMPORTS` | `5000` | Base fee per signature. |
-| `MAX_TRADE_LAMPORTS` | `5000000000` | Max lamports spent on leg 1. |
+| `MAX_TRADE_LAMPORTS` | `100000000` | Max lamports spent on leg 1 (0.1 SOL; also a hard risk limit). |
 | `MIN_TRADE_LAMPORTS` | `1000000` | Smallest trade considered. |
 | `MAX_WSOL_LAMPORTS` | `5000000000` | Max share of the wSOL ATA balance the bot may use. |
 | `LEG_SLIPPAGE_BPS` | `0` | Slippage on the intermediate leg. 0 = exact quoted amount. |
@@ -69,7 +69,7 @@ MODE=live KEYPAIR_PATH=~/bot.keypair.json CONFIRM_LIVE=yes RPC_URL=https://<your
 | `WS_URL` | derived | WebSocket endpoint for `RPC_URL`. |
 | `GRPC_ENDPOINT` / `GRPC_X_TOKEN` | – | Yellowstone Geyser gRPC (ERPC Geyser gRPC). Token goes in the `x-token` header. |
 | `GRPC_COMMITMENT` | `COMMITMENT` | `processed` / `confirmed` / `finalized` for the stream. |
-| `GRPC_PING_MS` / `GRPC_STALE_MS` / `GRPC_DEBOUNCE_MS` | `10000` / `3000` / `20` | Keepalive ping, staleness cutoff (then RPC poll), per-slot debounce. |
+| `GRPC_PING_MS` / `GRPC_STALE_MS` / `GRPC_DEBOUNCE_MS` | `10000` / `3000` / `3` | Keepalive ping, staleness cutoff (then RPC poll), per-slot debounce (flushes earlier on the slot status). |
 | `GRPC_RECONNECT_MIN_MS` / `GRPC_RECONNECT_MAX_MS` | `250` / `15000` | Reconnect backoff. |
 | `SHREDSTREAM_ENDPOINT` / `SHREDSTREAM_X_TOKEN` | – | ShredStream entries (ERPC Shreds). Hint only, never applied to state. |
 | `SHREDSTREAM_SERVER_FILTER` | `0` | Ask ERPC to pre-filter entries by account (marked experimental by ERPC). |
@@ -77,27 +77,90 @@ MODE=live KEYPAIR_PATH=~/bot.keypair.json CONFIRM_LIVE=yes RPC_URL=https://<your
 | `SHREDS_RESOLVE_ALTS` | `1` | Resolve lookup tables of relevant-looking v0 txs via RPC. |
 | `SHREDS_HOLD_ON_COMPETING_ARB` / `SHREDS_HOLD_WINDOW_MS` | `0` / `1500` | Skip a trade while a competing arb on the pool is pending. Off by default. |
 | `LATENCY_SUMMARY_MS` | `60000` | Period of the `latency` summary ledger row (0 = off). |
+| `DELIVERY` | `rpc` | `rpc` (sendRawTransaction to `SEND_RPC_URL`/`RPC_URL`) or `jito` (single-tx bundle with an in-tx tip). `ab` = live A/B, refused unless `MODE=live`, `CONFIRM_LIVE=yes`, `DELIVERY_COMPARE_LIVE=yes`. |
+| `JITO_BLOCK_ENGINE_URL` / `JITO_UUID` / `JITO_TIP_ACCOUNTS_TTL_MS` | `https://mainnet.block-engine.jito.wtf` / – / `600000` | Jito block engine, optional `x-jito-auth`, tip-account cache lifetime. |
+| **risk limits** | | **Defaults are the operator-specified limits (see Safety).** |
+| `MAX_PRIORITY_FEE_LAMPORTS` / `MAX_TIP_LAMPORTS` | `50000` / `50000` | Per-tx caps. |
+| `MAX_EXEC_COST_BPS_OF_PROFIT` | `1000` | priority + tip ≤ 10% of the expected profit before execution costs (out − in). |
+| `MIN_NET_PROFIT_LAMPORTS` | `100000` | Min expected net after base + priority + tip. |
+| `MAX_DAILY_EXEC_COST_LAMPORTS` | `5000000` | Halt for the UTC day at Σ(fee + tip) of landed txs (success or failure). Persisted. |
+| `MAX_DAILY_LOSS_LAMPORTS` | `10000000` | Halt for the UTC day at this realized SOL loss. Persisted. |
+| `MAX_CONSECUTIVE_FAILURES` / `EXPIRED_COUNTS_AS_FAILURE` | `3` / `1` | Halt after N unsuccessful txs in a row (persisted until `estop.ts clear-failures`). |
+| `MAX_STALE_SLOTS` / `MAX_STALE_MS` | `8` / `3000` | Refuse to build/send on a snapshot this far behind the newest slot seen / this old. |
+| `SIM_MAX_AGE_MS` | `3000` | The sender refuses a tx whose exact message did not simulate OK within this window. |
+| `KILL_FILE` / `RISK_STATE_PATH` / `PID_FILE` | `data/STOP` / `data/risk-state.json` / `data/bot.pid` | E-stop file, persistent risk state, pid for `estop.ts`. |
+| `UPGRADE_CHECK_MS` | `30000` | Programdata deploy-slot check of the RISE and Meteora DLMM programs. |
 
 All variables, with placeholders, are listed in [`deploy/.env.example`](deploy/.env.example).
 
 ## Safety defaults
 
 - **Simulate mode is the default.** It never signs or sends. With no keypair it simulates as `SIM_USER`, with
-  `sigVerify: false`.
+  `sigVerify: false`. None of the risk limits below enables live trading.
 - **Live mode needs three explicit opt-ins**: `MODE=live`, a keypair, and `CONFIRM_LIVE=yes`.
-- **Every tx is simulated before sending, and the sim must pass.** The bot simulates twice: once with a generous CU
-  limit to measure usage, then again on the exact final message with CU = units × 1.15. A tx is rejected when:
+- **Every tx is simulated before sending, and the sim must pass.** The bot simulates the exact final message (CU =
+  units × 1.15, tip ix included). A tx is rejected when:
   - the simulation errors,
   - Δ wSOL − fee < floor,
   - the RISE balance would drop,
   - simulated profit deviates from the quote beyond tolerance.
-- **The profit floor is enforced on-chain** through the final leg's min-out, net of fees.
-- **One tx in flight at most.** Ticks are serialized, and a tick does not return until its tx confirms, fails or
-  expires.
-- **Session loss limit.** A kill-switch stops the bot once the session's realized net falls past
+- **Simulate-before-submit is enforced in the sender.** The engine only submits through `GuardedSender`, which refuses
+  (nothing is broadcast) outside `MODE=live`, for a message hash that did not simulate OK within `SIM_MAX_AGE_MS`, and
+  for a signature it already submitted.
+- **The profit floor is enforced on-chain** through the final leg's min-out, net of base fee, priority fee and tip.
+
+### Risk limits (`src/engine/risk.ts`; defaults = operator limits, env-overridable)
+
+| limit | default | when |
+|---|---|---|
+| max input per trade | 100,000,000 lamports (0.1 SOL) | optimizer cap + pre-build + pre-send check |
+| max priority fee / tx | 50,000 lamports | pre-send |
+| max tip / tx | 50,000 lamports | pre-send (Jito) |
+| priority + tip | ≤ 10% of expected profit before execution costs | pre-send |
+| min expected net profit | 100,000 lamports after base + priority + tip | optimizer floor + pre-send |
+| daily execution costs | stop at 5,000,000 lamports Σ(fee + tip) of landed txs (success or failure), regardless of profit | after each outcome; a tx that would cross it is refused |
+| daily realized loss | stop at 10,000,000 lamports | after each outcome |
+| consecutive failures | stop after 3 (landed failures; expired/dropped count too unless `EXPIRED_COUNTS_AS_FAILURE=0`) | after each outcome |
+
+- **Daily limits persist** in `data/risk-state.json` keyed by UTC day: a restart the same day stays halted. The
+  process idles (no trading) and resumes at 00:00 UTC. The failure streak persists across days until
+  `npx tsx src/engine/estop.ts clear-failures` (with the bot stopped).
+- **Exactly one tx in flight.** A submission is claimed (and persisted) before broadcast and released only after its
+  final status is resolved: confirmed, failed, or expired by blockhash (block height past `lastValidBlockHeight`, then
+  signature status re-checked with history). A tx left in flight by a crash is resolved at the next start (and
+  recorded) before anything else is sent.
+- **Duplicate protection.** A signature or message hash is never submitted twice (last 64 persisted); the only
+  repeat is the sender's own rebroadcast of the identical signed tx. An opportunity identical to the one in flight, or
+  to one that just failed in the same slot, is refused.
+- **Stale state.** Refuse to build or send when the snapshot slot is more than `MAX_STALE_SLOTS` behind the newest slot
+  seen (state feed, simulation context, statuses), older than `MAX_STALE_MS`, or the provider reports stale data.
+- **Program upgrades.** RISE already pauses quoting during an upgrade. In addition the 45-byte programdata header
+  (deploy slot + authority) of **RISE** (`2jmivX…XB1E`) and **Meteora DLMM** (`HZcJwc…bEhu`, deploy slot 423,977,638 at
+  the time of writing) is read at start and every `UPGRADE_CHECK_MS`; any change, or the RISE venue's `programStale`
+  flag, halts trading until restart. Both baselines go into the `start` ledger row.
+- **Emergency stop.** `touch data/STOP` (checked every tick), `kill -USR1 <pid>`, or
+  `npx tsx src/engine/estop.ts [reason]` (writes the kill file and signals the pid in `data/bot.pid`). Once tripped it
+  stays tripped for the life of the process, and the kill file keeps it tripped across restarts until removed
+  (`estop.ts clear`) **and** the bot is restarted. `estop.ts status` shows the file, pid and risk state.
+- **Every halt is logged** as a `halt` ledger row (reason + detail); non-halting refusals as `risk` rows.
+- **Session loss limit.** The older kill-switch still stops the bot once the session's realized net falls past
   `MAX_SESSION_LOSS_LAMPORTS`.
 - **Graceful shutdown.** SIGINT/SIGTERM finishes the current tick and waits for any in-flight tx. A second signal
   exits immediately.
+
+### Delivery
+
+- `DELIVERY=rpc` (default): `RpcSender`, sendRawTransaction (skipPreflight, maxRetries 0) to `SEND_RPC_URL` (ERPC
+  SWQoS) or `RPC_URL`, rebroadcast until resolved.
+- `DELIVERY=jito`: `JitoSender`, one `sendBundle` holding the single arb tx; the tip is a transfer to a random tip
+  account (from `getTipAccounts`, cached) inside the same tx, sized by the shared fee/tip policy (`fees.ts`) and
+  budgeted in the on-chain min-out. Never falls back to public RPC. In simulate mode the tip ix is simulated but
+  nothing is sent.
+- `npx tsx src/engine/delivery-compare.ts` writes `src/engine/DELIVERY.md`: the exact per-service cost model
+  (RPC failures pay fees; failing Jito bundles do not land and cost 0), **estimated** expected value under assumed
+  landing rates, and read-only market data (recent prioritization fees for the pool/RISE market, Jito tip accounts,
+  tip floor if reachable). Landing rates are not measured; the live A/B (`--live`) sends real transactions and needs
+  `MODE=live CONFIRM_LIVE=yes DELIVERY_COMPARE_LIVE=yes` and the operator's approval.
 
 ## Architecture
 
@@ -122,7 +185,12 @@ src/engine/
                         RISE ATAs) → decoded SPL amounts → simulated profit + checks + CU limit
   latency.ts            per-tick latency marks (update received → refreshed → decision → simulated → sent)
   sender.ts             Sender interface; RpcSender = sendRawTransaction(skipPreflight, maxRetries 0) +
-                        own rebroadcast loop until confirmed / failed / blockhash expiry. (Jito: add another Sender.)
+                        own rebroadcast loop until confirmed / failed / blockhash expiry; JitoSender (bundle + tip);
+                        GuardedSender (live only, simulated-OK message, no duplicates); resolveSignature
+  risk.ts               RiskGuard (limits, daily persistence, halts, duplicates, one-in-flight, stale state),
+                        ProgramUpgradeGuard (RISE + DLMM programdata), crash-orphan resolution
+  estop.ts              emergency stop helper (kill file + SIGUSR1; status / clear / clear-failures)
+  delivery-compare.ts   RPC vs Jito cost model, read-only fee/tip data, gated live A/B -> DELIVERY.md
   engine.ts             ArbEngine.tick(): refresh → optimize both → build → sim → final sim → [live] send → realize
   ledger.ts             JSONL ledger + realized-PnL math from getTransaction (actual fee, Δ wSOL / Δ RISE / Δ native)
   report.ts             PnL report for the ledger, or for a directory of saved reference-wallet txs
@@ -183,7 +251,12 @@ journalctl -u rise-arb -f
 `data/ledger.jsonl` gets one JSON object per event:
 
 - `start`, `opportunity` (the plan), `simulation` (stage `pre` and `final`, with reasons), `submission`,
-  `outcome`, `error`, `stop`, `hold` (competing-arb hold, opt-in), `latency` (periodic summary).
+  `outcome`, `error`, `stop`, `hold` (competing-arb hold, opt-in), `latency` (periodic summary),
+  `halt` (every risk halt), `risk` (refused plans), `balances` (wSOL/RISE snapshot at start/stop) and
+  `reconcile` (startup: on-chain balances vs last snapshot + Σ outcome deltas, with drift).
+- Outcome rows also carry `exec` {base, priority, tip}, `tradingProfit`, `failedCost`, `residualRise`, `expected`
+  (final-sim deltas, fee, tip), `drift` (actual − expected) and `latencyMs` {decision, built, simulated, sent, landed,
+  slotsToLand} from the update's receive time.
 - Bigints are stored as decimal strings.
 
 Outcomes always come from the landed transaction (`getTransaction`):
@@ -201,7 +274,11 @@ How each case is recorded:
 - **RISE residue** is reported separately. The DLMM host-fee rebate on RISE input leaves a little RISE behind on
   `mintThenSell`. The report values it at the trade-time mark as an estimate.
 
-`npx tsx src/engine/report.ts [--ledger path]` prints:
+`npx tsx src/engine/report.ts [--ledger path] [--days N]` prints, per UTC day and all-time, separate sections:
+`[trading]` realized trading profit, `[costs]` base / priority / tip, `[failed]` failed-attempt costs, `[net]`,
+`[residual]` RISE residue (valued separately, never in realized SOL), `[reconcile]` drift vs simulation, `[latency]`
+per stage, `[delivery]` per service, `[halts]`, `[risk]`; then the paper section. The older summary
+(`summarize`, used for the reference backfill) prints:
 
 - counts: submitted, landed, ok, failed, dropped
 - gross, fees, failed-tx cost and net

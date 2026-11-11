@@ -181,6 +181,7 @@ export class GrpcProvider implements StateProvider {
   readonly signal: ChangeSignal;
   lastSlot = -1;
   lastUpdateAt?: number;
+  lastIngestMs?: number;
   lastSource?: string;
 
   status: GrpcStatus = "idle";
@@ -218,7 +219,7 @@ export class GrpcProvider implements StateProvider {
       commitment: opts.commitment ?? "confirmed",
       pingMs: opts.pingMs ?? 10_000,
       staleMs: opts.staleMs ?? 3_000,
-      debounceMs: opts.debounceMs ?? 20,
+      debounceMs: opts.debounceMs ?? 3,
       reconnectMinMs: opts.reconnectMinMs ?? 250,
       reconnectMaxMs: opts.reconnectMaxMs ?? 15_000,
       now: opts.now ?? (() => performance.now()),
@@ -436,6 +437,7 @@ export class GrpcProvider implements StateProvider {
       const r = await this.poller.refresh();
       this.lastSlot = Math.max(this.lastSlot, r.slot);
       this.lastUpdateAt = this.poller.lastUpdateAt;
+      this.lastIngestMs = this.poller.lastIngestMs;
       this.lastSource = "grpc-fallback-rpc";
       return r;
     }
@@ -445,8 +447,11 @@ export class GrpcProvider implements StateProvider {
     const slot = Math.max(this.snapshotSlot, this.lastSlot);
     let keys = this.wanted();
     let infos = this.snapshot(keys);
+    let ingest = 0;
     for (let round = 0; round < this.o.maxRounds; round++) {
+      const t0 = performance.now();
       for (const s of this.sources) s.update(slot, infos);
+      ingest += performance.now() - t0;
       const next = this.wanted();
       const missing = next.filter((k) => !this.store.has(k));
       const unsubscribed = next.filter((k) => !this.subscribed.has(k));
@@ -464,6 +469,7 @@ export class GrpcProvider implements StateProvider {
     this.consumedVersion = version;
     this.lastSlot = slot;
     this.lastUpdateAt = this.snapshotReceivedAt;
+    this.lastIngestMs = ingest;
     this.lastSource = "grpc";
     return { slot, updated: true };
   }

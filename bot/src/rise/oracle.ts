@@ -31,6 +31,8 @@ export class SvmOracle {
   private respFd = -1;
   private dir = "";
   private pending = "";
+  /** Reused read buffer (one per oracle; calls are synchronous). */
+  private readonly chunk = Buffer.allocUnsafe(1 << 16);
   private program: Buffer | null = null;
   private state: OracleState | null = null;
   /** Number of times the child had to be (re)started. */
@@ -113,7 +115,7 @@ export class SvmOracle {
       const line = Buffer.from(JSON.stringify(msg) + "\n");
       let off = 0;
       while (off < line.length) off += fs.writeSync(this.reqFd, line, off);
-      const chunk = Buffer.alloc(1 << 16);
+      const chunk = this.chunk;
       for (;;) {
         const i = this.pending.indexOf("\n");
         if (i >= 0) {

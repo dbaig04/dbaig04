@@ -28,6 +28,8 @@ export interface StateProvider {
   readonly lastUpdateAt?: number;
   /** Which path produced the last snapshot (e.g. "rpc", "grpc", "grpc-fallback-rpc"). */
   readonly lastSource?: string;
+  /** Time spent feeding the last snapshot to the sources (update() calls), ms. */
+  readonly lastIngestMs?: number;
   /**
    * Event-driven loop support: resolve when new state may be available, or after
    * timeoutMs. Providers without a push feed simply sleep.
@@ -41,6 +43,7 @@ export class StateManager implements StateProvider {
   lastSlot = -1;
   lastUpdateAt?: number;
   lastSource?: string;
+  lastIngestMs?: number;
   /** Max rounds per tick when a source's accounts() grows after an update (e.g. bin arrays). */
   maxRounds = 3;
 
@@ -84,8 +87,12 @@ export class StateManager implements StateProvider {
     if (cur <= this.lastSlot) return { slot: this.lastSlot, updated: false };
     let keys = this.union();
     let { slot, infos } = await this.fetch(keys, cur);
+    let fetchedAt = performance.now();
+    let ingest = 0;
     for (let round = 0; round < this.maxRounds; round++) {
+      const t0 = performance.now();
       for (const s of this.sources) s.update(slot, infos);
+      ingest += performance.now() - t0;
       const next = this.union();
       const missing = next.filter((k) => !infos.has(k.toBase58()));
       if (missing.length === 0) break;
@@ -93,9 +100,12 @@ export class StateManager implements StateProvider {
       // refetch everything at the same/next slot so the snapshot stays consistent.
       keys = next;
       ({ slot, infos } = await this.fetch(keys, slot));
+      fetchedAt = performance.now();
     }
     this.lastSlot = slot;
-    this.lastUpdateAt = performance.now();
+    // the data was received when the (last) RPC response arrived; ingest time is reported separately
+    this.lastUpdateAt = fetchedAt;
+    this.lastIngestMs = ingest;
     this.lastSource = "rpc";
     return { slot, updated: true };
   }

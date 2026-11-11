@@ -1,10 +1,14 @@
 // Builds the single atomic arb tx: SetComputeUnitLimit + SetComputeUnitPrice,
-// then the two legs. Leg mins:
+// then the two legs [+ tip transfer when the plan pays a tip]. Leg mins:
 //  - leg-1 intermediate: exactly the quoted amount (or quoted - slippage bps)
-//  - final leg min-out:  lamportsIn + profitFloor + txCost  (enforced on-chain,
-//    so a landed tx is net-profitable by at least the floor after fees)
-import { ComputeBudgetProgram, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction, type Keypair } from "@solana/web3.js";
+//  - final leg min-out:  lamportsIn + minOutPad + execution costs (base + priority + tip)
+//    + profitFloor, enforced on-chain, so a landed tx is net-profitable by at least the
+//    floor after every cost. lamportsIn is the NET wSOL spend (buyThenRedeem: DLMM max-in
+//    minus the host-fee rebate the user's own input account receives).
+import { ComputeBudgetProgram, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction, type Keypair } from "@solana/web3.js";
 import type { Plan, Venues } from "./optimizer.js";
+import type { ExecFees } from "./fees.js";
+export { chooseExecutionFees, netAfterExecution, minGrossForNet, type ExecFeePolicy, type ExecFees } from "./fees.js";
 
 export const MAX_CU = 1_400_000;
 /** CU limit used for the pre-flight simulation (actual limit is set from the sim). */
@@ -40,6 +44,13 @@ export interface BuildParams extends FeeParams {
   cuLimit: number;
   recentBlockhash: string;
   signer?: Keypair | null;
+  /**
+   * Execution costs chosen for this trade (normally plan.fees). When set they override
+   * priorityFeeLamports/baseFeeLamports for the CU price, the fee check and the min-out.
+   */
+  execFees?: ExecFees;
+  /** Tip receiver (required iff execFees.tipLamports > 0; e.g. a Jito tip account). */
+  tipAccount?: PublicKey;
 }
 
 export interface BuiltTx {
@@ -53,12 +64,19 @@ export interface BuiltTx {
   cuLimit: number;
   cuPriceMicroLamports: bigint;
   feeLamports: bigint;
+  /** Tip transferred (0 without a tip ix). */
+  tipLamports: bigint;
+  /** base + priority + tip budgeted in the min-out. */
+  execCostLamports: bigint;
   recentBlockhash: string;
 }
 
-/** Final min-out = lamportsIn + floor + txCost. Throws if the quote cannot satisfy it. */
-export function finalMinOut(plan: Plan, profitFloor: bigint, txCost: bigint): bigint {
-  const min = plan.lamportsIn + profitFloor + txCost;
+/**
+ * Final min-out = lamportsIn + minOutPad + execCost + floor, where execCost is the full
+ * execution cost of this tx (base + priority + tip). Throws if the quote cannot satisfy it.
+ */
+export function finalMinOut(plan: Pick<Plan, "lamportsIn" | "lamportsOut"> & { minOutPad?: bigint }, profitFloor: bigint, txCost: bigint): bigint {
+  const min = plan.lamportsIn + (plan.minOutPad ?? 0n) + profitFloor + txCost;
   if (min > plan.lamportsOut) throw new Error(`plan cannot clear floor: quoted out ${plan.lamportsOut} < required ${min}`);
   return min;
 }
@@ -77,36 +95,43 @@ export function legInstructions(plan: Plan, v: Venues, user: PublicKey, profitFl
       finalMin,
     };
   }
-  // plan.lamportsIn = quoted exact-out input (+ slippage) = DLMM max-in.
+  // plan.grossIn = quoted exact-out gross input (+ slippage) = DLMM max-in.
+  const maxIn = plan.grossIn ?? plan.lamportsIn;
   return {
     ixs: [
-      v.dlmm.swapExactOutIx(user, "buyRise", plan.rise, plan.lamportsIn, plan.binArrays),
+      v.dlmm.swapExactOutIx(user, "buyRise", plan.rise, maxIn, plan.binArrays),
       v.rise.sellIx(user, plan.rise, finalMin),
     ],
-    leg1Limit: plan.lamportsIn,
+    leg1Limit: maxIn,
     finalMin,
   };
 }
 
 export function buildArbTx(plan: Plan, v: Venues, p: BuildParams): BuiltTx {
-  const txCost = estimatedTxCost(p);
+  const ef = p.execFees;
+  const priority = ef ? ef.priorityLamports : p.priorityFeeLamports;
+  const base = ef ? ef.baseLamports : p.baseFeeLamports * BigInt(p.signatures ?? 1);
+  const tip = ef ? ef.tipLamports : 0n;
+  const txCost = ef ? ef.totalLamports : estimatedTxCost(p);
+  if (tip > 0n && !p.tipAccount) throw new Error("plan pays a tip but no tip account was given");
   const { ixs, leg1Limit, finalMin } = legInstructions(plan, v, p.user, p.profitFloorLamports, txCost);
   const cuLimit = Math.min(MAX_CU, Math.max(1, Math.ceil(p.cuLimit)));
-  const price = cuPriceFor(p.priorityFeeLamports, cuLimit);
+  const price = cuPriceFor(priority, cuLimit);
   const instructions = [
     ComputeBudgetProgram.setComputeUnitLimit({ units: cuLimit }),
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: price }),
     ...ixs,
   ];
+  if (tip > 0n) instructions.push(SystemProgram.transfer({ fromPubkey: p.user, toPubkey: p.tipAccount!, lamports: tip }));
   const msg = new TransactionMessage({ payerKey: p.user, recentBlockhash: p.recentBlockhash, instructions }).compileToLegacyMessage();
   const tx = new VersionedTransaction(msg);
   if (p.signer) {
     if (!p.signer.publicKey.equals(p.user)) throw new Error("signer does not match user");
     tx.sign([p.signer]);
   }
-  const feeLamports = txFee(cuLimit, price, p.baseFeeLamports, p.signatures ?? 1);
-  if (feeLamports > txCost) throw new Error(`fee ${feeLamports} exceeds budgeted tx cost ${txCost}`);
-  return { tx, plan, instructions, leg1Limit, finalMinOut: finalMin, cuLimit, cuPriceMicroLamports: price, feeLamports, recentBlockhash: p.recentBlockhash };
+  const feeLamports = txFee(cuLimit, price, ef ? base : p.baseFeeLamports, ef ? 1 : p.signatures ?? 1);
+  if (feeLamports + tip > txCost) throw new Error(`fee ${feeLamports} + tip ${tip} exceeds budgeted execution cost ${txCost}`);
+  return { tx, plan, instructions, leg1Limit, finalMinOut: finalMin, cuLimit, cuPriceMicroLamports: price, feeLamports, tipLamports: tip, execCostLamports: txCost, recentBlockhash: p.recentBlockhash };
 }
 
 /** CU limit from simulated usage with headroom (bps, 11500 = 1.15x). */

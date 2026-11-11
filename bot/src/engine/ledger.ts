@@ -6,7 +6,16 @@ import { dirname } from "node:path";
 import type { Connection } from "@solana/web3.js";
 import { DLMM_PROGRAM_ID, RISE_PROGRAM_ID, type Direction } from "../types.js";
 
-export type LedgerEventType = "start" | "stop" | "opportunity" | "simulation" | "submission" | "outcome" | "error" | "latency" | "hold";
+export type LedgerEventType =
+  | "start" | "stop" | "opportunity" | "simulation" | "submission" | "outcome" | "error" | "latency" | "hold"
+  /** risk halt (every halt reason) */
+  | "halt"
+  /** non-halting risk rejection of a plan (stale state, spending limits, duplicates) */
+  | "risk"
+  /** startup on-chain vs ledger balance reconciliation */
+  | "reconcile"
+  /** on-chain wSOL / RISE balance snapshot (baseline for the next reconcile) */
+  | "balances";
 
 export interface LedgerEvent {
   ts: string;
@@ -218,4 +227,152 @@ export function outcomeFromEvent(e: LedgerEvent): OutcomeLike {
     fee: b(e.fee), wsolDelta: b(e.wsolDelta), riseDelta: b(e.riseDelta), nativeDelta: b(e.nativeDelta), netLamports: b(e.netLamports),
     riseMarkLamportsPerRiseE9: e.riseMarkLamportsPerRiseE9 === undefined ? undefined : b(e.riseMarkLamportsPerRiseE9),
   };
+}
+
+// ---------- per-outcome reconciliation and cost breakdown ----------
+
+/** What the bot expected a submission to do (from the final simulation and the built tx). */
+export interface ExpectedEffect {
+  /** Simulated Δ wSOL (token amount). */
+  wsolDelta: bigint;
+  /** Simulated Δ RISE. */
+  riseDelta: bigint;
+  /** Fee of the built tx (base + priority). */
+  feeLamports: bigint;
+  baseFeeLamports: bigint;
+  tipLamports: bigint;
+}
+
+export interface Reconciled {
+  /** wSOL Δ + native Δ + fee + tip: what the trade itself made (0 for failed/dropped). */
+  tradingProfitLamports: bigint;
+  baseFeeLamports: bigint;
+  priorityFeeLamports: bigint;
+  /** Measured: −native Δ − fee on a successful landed tx; a failed tx reverts the tip. */
+  tipLamports: bigint;
+  /** fee + tip actually paid. */
+  execCostLamports: bigint;
+  /** Execution cost of a landed-but-failed tx (subset of execCost); dropped/expired = 0. */
+  failedCostLamports: bigint;
+  /** RISE Δ, valued separately, never counted in realized SOL. */
+  residualRise: bigint;
+  /** actual − expected (only meaningful for successful landed txs; failed: vs a zero-token, fee-only expectation). */
+  drift: { wsol: bigint; rise: bigint; native: bigint };
+}
+
+export function reconcileOutcome(r: Realized, e: ExpectedEffect): Reconciled {
+  if (!r.landed) {
+    return { tradingProfitLamports: 0n, baseFeeLamports: 0n, priorityFeeLamports: 0n, tipLamports: 0n, execCostLamports: 0n, failedCostLamports: 0n, residualRise: 0n, drift: { wsol: 0n, rise: 0n, native: 0n } };
+  }
+  const base = r.fee < e.baseFeeLamports ? r.fee : e.baseFeeLamports;
+  const priority = r.fee - base;
+  const measuredTip = r.success ? -r.nativeDelta - r.fee : 0n;
+  const tip = measuredTip > 0n ? measuredTip : 0n;
+  const exec = r.fee + tip;
+  const expW = r.success ? e.wsolDelta : 0n;
+  const expR = r.success ? e.riseDelta : 0n;
+  const expN = -(e.feeLamports + (r.success ? e.tipLamports : 0n));
+  return {
+    tradingProfitLamports: r.netLamports + exec,
+    baseFeeLamports: base, priorityFeeLamports: priority, tipLamports: tip,
+    execCostLamports: exec, failedCostLamports: r.success ? 0n : exec,
+    residualRise: r.riseDelta,
+    drift: { wsol: r.wsolDelta - expW, rise: r.riseDelta - expR, native: r.nativeDelta - expN },
+  };
+}
+
+export interface PnlBreakdown {
+  submitted: number;
+  landed: number;
+  succeeded: number;
+  failedLanded: number;
+  dropped: number;
+  /** Realized trading profit (before execution costs) of successful txs. */
+  tradingProfitLamports: bigint;
+  baseFeeLamports: bigint;
+  priorityFeeLamports: bigint;
+  tipLamports: bigint;
+  /** base + priority + tip, all landed txs. */
+  execCostLamports: bigint;
+  /** Execution cost of landed-but-failed txs (subset of execCost). */
+  failedCostLamports: bigint;
+  /** Realized SOL: trading profit − execution costs (= Σ wSOL Δ + native Δ). */
+  netLamports: bigint;
+  /** RISE residue (raw) and its estimated value at trade-time marks — NOT in netLamports. */
+  residualRise: bigint;
+  residualRiseValueEstLamports: bigint;
+  /** Σ |drift| vs expectation over successful txs, per asset. */
+  absDrift: { wsol: bigint; rise: bigint; native: bigint };
+  driftTxs: number;
+}
+
+const big0 = (x: unknown) => BigInt((x as string | number | undefined) ?? 0);
+const absb = (x: bigint) => (x < 0n ? -x : x);
+
+/**
+ * Breakdown over outcome ledger rows. Rows written before reconciliation existed
+ * (no `exec` field) are treated as tip 0 with base fee min(fee, 5000).
+ */
+export function breakdown(outcomes: LedgerEvent[]): PnlBreakdown {
+  const s: PnlBreakdown = {
+    submitted: 0, landed: 0, succeeded: 0, failedLanded: 0, dropped: 0,
+    tradingProfitLamports: 0n, baseFeeLamports: 0n, priorityFeeLamports: 0n, tipLamports: 0n, execCostLamports: 0n, failedCostLamports: 0n,
+    netLamports: 0n, residualRise: 0n, residualRiseValueEstLamports: 0n, absDrift: { wsol: 0n, rise: 0n, native: 0n }, driftTxs: 0,
+  };
+  for (const e of outcomes) {
+    s.submitted++;
+    if (!e.landed) { s.dropped++; continue; }
+    s.landed++;
+    const fee = big0(e.fee);
+    const ex = e.exec as Record<string, unknown> | undefined;
+    const base = ex ? big0(ex.base) : fee < 5_000n ? fee : 5_000n;
+    const prio = ex ? big0(ex.priority) : fee - base;
+    const tip = ex ? big0(ex.tip) : 0n;
+    const net = big0(e.netLamports);
+    s.baseFeeLamports += base;
+    s.priorityFeeLamports += prio;
+    s.tipLamports += tip;
+    s.execCostLamports += base + prio + tip;
+    s.netLamports += net;
+    const rise = big0(e.riseDelta);
+    s.residualRise += rise;
+    if (e.riseMarkLamportsPerRiseE9 !== undefined) s.residualRiseValueEstLamports += (rise * big0(e.riseMarkLamportsPerRiseE9)) / 1_000_000_000n;
+    if (e.success) {
+      s.succeeded++;
+      s.tradingProfitLamports += net + base + prio + tip;
+      const d = e.drift as Record<string, unknown> | undefined;
+      if (d) {
+        s.driftTxs++;
+        s.absDrift.wsol += absb(big0(d.wsol));
+        s.absDrift.rise += absb(big0(d.rise));
+        s.absDrift.native += absb(big0(d.native));
+      }
+    } else {
+      s.failedLanded++;
+      s.failedCostLamports += base + prio + tip;
+      // a failed tx's "trading profit" is 0; its net is −cost
+      s.tradingProfitLamports += net + base + prio + tip;
+    }
+  }
+  return s;
+}
+
+/**
+ * Startup reconcile: on-chain wSOL / RISE vs (last balances snapshot for this user
+ * + Σ outcome token deltas after it). Returns null without a baseline.
+ */
+export function reconcileBalances(events: LedgerEvent[], user: string, onchain: { wsol: bigint; rise: bigint }): { baselineTs: string; expected: { wsol: bigint; rise: bigint }; drift: { wsol: bigint; rise: bigint }; outcomesSince: number } | null {
+  let bi = -1;
+  for (let i = events.length - 1; i >= 0; i--) if (events[i].type === "balances" && events[i].user === user) { bi = i; break; }
+  if (bi < 0) return null;
+  const b = events[bi];
+  let wsol = big0(b.wsol), rise = big0(b.rise), n = 0;
+  for (const e of events.slice(bi + 1)) {
+    if (e.type !== "outcome" || !e.landed) continue;
+    if (e.user !== undefined && e.user !== user) continue;
+    wsol += big0(e.wsolDelta);
+    rise += big0(e.riseDelta);
+    n++;
+  }
+  return { baselineTs: b.ts, expected: { wsol, rise }, drift: { wsol: onchain.wsol - wsol, rise: onchain.rise - rise }, outcomesSince: n };
 }

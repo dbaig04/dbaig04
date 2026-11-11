@@ -5,6 +5,64 @@ import { readFileSync } from "node:fs";
 import { Keypair, PublicKey } from "@solana/web3.js";
 
 export type Mode = "simulate" | "live";
+/** rpc (default) | jito | ab (live delivery A/B, gated by assertLiveAbAllowed) */
+export type Delivery = "rpc" | "jito" | "ab";
+
+/** Live delivery A/B sends real txs: throws unless MODE=live, CONFIRM_LIVE=yes, DELIVERY_COMPARE_LIVE=yes and a keypair. */
+export function assertLiveAbAllowed(e: NodeJS.ProcessEnv): void {
+  const missing: string[] = [];
+  if ((e.MODE ?? "").toLowerCase() !== "live") missing.push("MODE=live");
+  if (e.CONFIRM_LIVE !== "yes") missing.push("CONFIRM_LIVE=yes");
+  if (e.DELIVERY_COMPARE_LIVE !== "yes") missing.push("DELIVERY_COMPARE_LIVE=yes");
+  if (!e.KEYPAIR_PATH) missing.push("KEYPAIR_PATH");
+  if (missing.length) throw new Error(`live delivery A/B refused: requires ${missing.join(", ")} (it sends real transactions)`);
+}
+
+/**
+ * Hard risk limits (src/engine/risk.ts). Defaults are the operator-specified limits;
+ * each is env-overridable. None of them enables live trading.
+ */
+export interface RiskConfig {
+  /** Max leg-1 input per trade (MAX_TRADE_LAMPORTS; also caps the optimizer). */
+  maxInputLamports: bigint;
+  maxPriorityFeeLamports: bigint;
+  maxTipLamports: bigint;
+  /** priority + tip <= this share (bps) of the expected profit before execution costs (out − in). 1000 = 10%. */
+  maxExecCostBpsOfProfit: bigint;
+  /** Min expected net profit after all trading and execution costs (base + priority + tip). */
+  minNetProfitLamports: bigint;
+  /** Halt for the UTC day once Σ(fee + tip) of landed txs reaches this. Persisted. */
+  maxDailyExecCostLamports: bigint;
+  /** Halt for the UTC day once the day's realized SOL net <= -this. Persisted. */
+  maxDailyLossLamports: bigint;
+  /** Halt after this many consecutive unsuccessful txs. Persisted until cleared (estop.ts clear-failures). */
+  maxConsecutiveFailures: number;
+  /** Count expired/dropped (never-landed) txs as failures for the streak. */
+  expiredCountsAsFailure: boolean;
+  /** Refuse to build/send when the snapshot slot is more than this many slots behind the newest slot seen. */
+  maxStaleSlots: number;
+  /** ...or when the snapshot data is older than this many ms. */
+  maxStaleMs: number;
+  /** Sender refuses a tx whose exact message was not simulated OK within this many ms. */
+  simMaxAgeMs: number;
+  /** Emergency-stop kill file, checked every tick. */
+  killFile: string;
+  /** Persistent risk state (daily costs/PnL, failure streak, in-flight tx). */
+  statePath: string;
+  /** PID file (lets estop.ts send SIGUSR1). */
+  pidFile: string;
+  /** Period of the programdata deploy-slot check for the RISE and DLMM programs. */
+  upgradeCheckMs: number;
+}
+
+export interface JitoConfig {
+  /** Block engine base URL (sendBundle / getTipAccounts / getBundleStatuses). */
+  blockEngineUrl: string;
+  /** Optional x-jito-auth UUID. */
+  uuid?: string;
+  /** Tip-account cache lifetime. */
+  tipAccountsTtlMs: number;
+}
 export type FeedCommitment = "processed" | "confirmed" | "finalized";
 
 /** Yellowstone Geyser gRPC (ERPC Geyser gRPC). Enabled iff GRPC_ENDPOINT is set. */
@@ -83,6 +141,17 @@ export interface Config {
   latencySummaryMs: number;
   /** Keep the SEND_RPC_URL connection warm with a cheap request every N ms (0 = off). */
   sendWarmMs: number;
+  /** Background blockhash refresh period / age after which the cached one is not used (src/engine/blockhash.ts). */
+  blockhashRefreshMs: number;
+  blockhashStaleMs: number;
+  /** Append a per-tick "tick" latency row to the ledger (bench / diagnostics). */
+  tickLatencyRows: boolean;
+  /** Bench only, ignored unless MODE=simulate: build + simulate the best plan every tick even below the floor (measures build + sim RTT). */
+  benchForceBuild: boolean;
+  /** How txs are delivered in live mode: rpc (SEND_RPC_URL / RPC_URL, default) or jito (sendBundle). */
+  delivery: Delivery;
+  jito: JitoConfig;
+  risk: RiskConfig;
 }
 
 function env(name: string, def?: string): string | undefined {
@@ -150,6 +219,11 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
     }
     const user = keypair ? keypair.publicKey : new PublicKey(env("SIM_USER", REFERENCE_WALLET)!);
     const commitment = env("COMMITMENT", "confirmed") as Config["commitment"];
+    const deliveryRaw = (env("DELIVERY", "rpc") as string).toLowerCase();
+    if (deliveryRaw !== "rpc" && deliveryRaw !== "jito" && deliveryRaw !== "ab") throw new Error(`DELIVERY must be rpc|jito, got ${deliveryRaw}`);
+    if (deliveryRaw === "ab") assertLiveAbAllowed(process.env);
+    const delivery = deliveryRaw as Delivery;
+    const risk = riskFromEnv();
     return {
       rpcUrl: env("RPC_URL", "https://api.mainnet-beta.solana.com")!,
       mode,
@@ -158,7 +232,7 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
       profitFloorLamports: big("PROFIT_FLOOR_LAMPORTS", 100_000n),
       priorityFeeLamports: big("PRIORITY_FEE_LAMPORTS", 50_000n),
       baseFeeLamports: big("BASE_FEE_LAMPORTS", 5_000n),
-      maxTradeLamports: big("MAX_TRADE_LAMPORTS", 5_000_000_000n),
+      maxTradeLamports: risk.maxInputLamports,
       minTradeLamports: big("MIN_TRADE_LAMPORTS", 1_000_000n),
       maxWsolLamports: big("MAX_WSOL_LAMPORTS", 5_000_000_000n),
       legSlippageBps: big("LEG_SLIPPAGE_BPS", 0n),
@@ -177,10 +251,58 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
       holdOnCompetingArb: bool("SHREDS_HOLD_ON_COMPETING_ARB", false),
       latencySummaryMs: num("LATENCY_SUMMARY_MS", 60_000),
       sendWarmMs: num("SEND_RPC_WARM_MS", 0),
+      blockhashRefreshMs: num("BLOCKHASH_REFRESH_MS", 2_000),
+      blockhashStaleMs: num("BLOCKHASH_STALE_MS", 20_000),
+      tickLatencyRows: bool("LEDGER_TICK_LATENCY", false),
+      benchForceBuild: mode === "simulate" && bool("BENCH_FORCE_BUILD", false),
+      delivery,
+      jito: {
+        blockEngineUrl: url("JITO_BLOCK_ENGINE_URL", ["https:", "http:"]) ?? "https://mainnet.block-engine.jito.wtf",
+        uuid: env("JITO_UUID"),
+        tipAccountsTtlMs: num("JITO_TIP_ACCOUNTS_TTL_MS", 600_000),
+      },
+      risk,
     };
   } finally {
     process.env = saved;
   }
+}
+
+/** Operator-specified risk limits. Defaults are exact; env vars only override them. */
+export const RISK_DEFAULTS = {
+  maxInputLamports: 100_000_000n, // 0.1 SOL
+  maxPriorityFeeLamports: 50_000n,
+  maxTipLamports: 50_000n,
+  maxExecCostBpsOfProfit: 1_000n, // 10%
+  minNetProfitLamports: 100_000n,
+  maxDailyExecCostLamports: 5_000_000n,
+  maxDailyLossLamports: 10_000_000n,
+  maxConsecutiveFailures: 3,
+} as const;
+
+function riskFromEnv(): RiskConfig {
+  const failures = num("MAX_CONSECUTIVE_FAILURES", RISK_DEFAULTS.maxConsecutiveFailures);
+  if (!Number.isInteger(failures) || failures < 1) throw new Error("MAX_CONSECUTIVE_FAILURES must be an integer >= 1");
+  const bps = big("MAX_EXEC_COST_BPS_OF_PROFIT", RISK_DEFAULTS.maxExecCostBpsOfProfit);
+  if (bps > 10_000n) throw new Error("MAX_EXEC_COST_BPS_OF_PROFIT must be <= 10000");
+  return {
+    maxInputLamports: big("MAX_TRADE_LAMPORTS", RISK_DEFAULTS.maxInputLamports),
+    maxPriorityFeeLamports: big("MAX_PRIORITY_FEE_LAMPORTS", RISK_DEFAULTS.maxPriorityFeeLamports),
+    maxTipLamports: big("MAX_TIP_LAMPORTS", RISK_DEFAULTS.maxTipLamports),
+    maxExecCostBpsOfProfit: bps,
+    minNetProfitLamports: big("MIN_NET_PROFIT_LAMPORTS", RISK_DEFAULTS.minNetProfitLamports),
+    maxDailyExecCostLamports: big("MAX_DAILY_EXEC_COST_LAMPORTS", RISK_DEFAULTS.maxDailyExecCostLamports),
+    maxDailyLossLamports: big("MAX_DAILY_LOSS_LAMPORTS", RISK_DEFAULTS.maxDailyLossLamports),
+    maxConsecutiveFailures: failures,
+    expiredCountsAsFailure: bool("EXPIRED_COUNTS_AS_FAILURE", true),
+    maxStaleSlots: num("MAX_STALE_SLOTS", 8),
+    maxStaleMs: num("MAX_STALE_MS", 3_000),
+    simMaxAgeMs: num("SIM_MAX_AGE_MS", 3_000),
+    killFile: env("KILL_FILE", "data/STOP")!,
+    statePath: env("RISK_STATE_PATH", "data/risk-state.json")!,
+    pidFile: env("PID_FILE", "data/bot.pid")!,
+    upgradeCheckMs: num("UPGRADE_CHECK_MS", 30_000),
+  };
 }
 
 function grpcFromEnv(commitment: Config["commitment"]): GrpcConfig | null {
@@ -192,7 +314,7 @@ function grpcFromEnv(commitment: Config["commitment"]): GrpcConfig | null {
     commitment: feedCommitment("GRPC_COMMITMENT", commitment),
     pingMs: num("GRPC_PING_MS", 10_000),
     staleMs: num("GRPC_STALE_MS", 3_000),
-    debounceMs: num("GRPC_DEBOUNCE_MS", 20),
+    debounceMs: num("GRPC_DEBOUNCE_MS", 3),
     reconnectMinMs: num("GRPC_RECONNECT_MIN_MS", 250),
     reconnectMaxMs: num("GRPC_RECONNECT_MAX_MS", 15_000),
   };
@@ -211,8 +333,8 @@ function shredsFromEnv(): ShredsConfig | null {
   };
 }
 
-const SECRET_KEYS = new Set(["xToken"]);
-const URL_KEYS = new Set(["rpcUrl", "sendRpcUrl", "wsUrl", "endpoint"]);
+const SECRET_KEYS = new Set(["xToken", "uuid"]);
+const URL_KEYS = new Set(["rpcUrl", "sendRpcUrl", "wsUrl", "endpoint", "blockEngineUrl"]);
 
 /** Hide URL paths/queries (providers embed API keys there): keep scheme://host only. */
 export function redactUrl(u: string | null | undefined): string {

@@ -9,6 +9,12 @@ export interface LatencyMarks {
   tickStart: number;
   refreshed?: number;
   decided?: number;
+  /** Ready-to-simulate/send tx built (blockhash from cache, CU limit, signed in live mode). */
+  built?: number;
+  /** When the provider received the snapshot data (poll: RPC response arrival, which is after tickStart). */
+  dataAt?: number;
+  /** Time spent in the sources' update() for this snapshot. */
+  ingestMs?: number;
   simulated?: number;
   sent?: number;
 }
@@ -23,6 +29,12 @@ export interface LatencyRecord {
   queueMs: number;
   refreshMs?: number;
   decisionMs?: number;
+  /** received -> ready tx built. */
+  builtMs?: number;
+  /** Ingest (sources' update()) and data-arrival -> decision / -> ready tx (excludes the RPC fetch when polling). */
+  ingestMs?: number;
+  dataToDecisionMs?: number;
+  dataToBuiltMs?: number;
   simulatedMs?: number;
   sentMs?: number;
 }
@@ -36,6 +48,10 @@ export function latencyRecord(slot: number, source: string, status: string, m: L
     queueMs: r1(m.tickStart - m.received),
     refreshMs: m.refreshed === undefined ? undefined : r1(m.refreshed - m.tickStart),
     decisionMs: rel(m.decided),
+    builtMs: rel(m.built),
+    ingestMs: m.ingestMs === undefined ? undefined : r1(m.ingestMs),
+    dataToDecisionMs: m.dataAt === undefined || m.decided === undefined ? undefined : r1(m.decided - m.dataAt),
+    dataToBuiltMs: m.dataAt === undefined || m.built === undefined ? undefined : r1(m.built - m.dataAt),
     simulatedMs: rel(m.simulated),
     sentMs: rel(m.sent),
   };
@@ -44,6 +60,7 @@ export function latencyRecord(slot: number, source: string, status: string, m: L
 /** Rolling summary (count / p50 / p90 / max of received->decision) flushed into the ledger periodically. */
 export class LatencyStats {
   private decision: number[] = [];
+  private built: number[] = [];
   private bySource = new Map<string, number>();
   private since: number;
   constructor(private periodMs: number, private now: () => number = () => performance.now()) {
@@ -51,6 +68,7 @@ export class LatencyStats {
   }
   add(r: LatencyRecord) {
     if (r.decisionMs !== undefined) this.decision.push(r.decisionMs);
+    if (r.builtMs !== undefined) this.built.push(r.builtMs);
     this.bySource.set(r.source, (this.bySource.get(r.source) ?? 0) + 1);
   }
   /** Returns a summary when the period elapsed (and resets), else null. */
@@ -58,8 +76,11 @@ export class LatencyStats {
     if (this.periodMs <= 0 || this.now() - this.since < this.periodMs) return null;
     const d = [...this.decision].sort((a, b) => a - b);
     const q = (p: number) => (d.length ? d[Math.min(d.length - 1, Math.floor(p * d.length))] : undefined);
-    const out = { kind: "summary", periodMs: Math.round(this.now() - this.since), ticks: Object.fromEntries(this.bySource), decisions: d.length, decisionP50Ms: q(0.5), decisionP90Ms: q(0.9), decisionMaxMs: d.at(-1) };
+    const b = [...this.built].sort((a, c) => a - c);
+    const qb = (p: number) => (b.length ? b[Math.min(b.length - 1, Math.floor(p * b.length))] : undefined);
+    const out = { kind: "summary", periodMs: Math.round(this.now() - this.since), ticks: Object.fromEntries(this.bySource), decisions: d.length, decisionP50Ms: q(0.5), decisionP90Ms: q(0.9), decisionMaxMs: d.at(-1), builtP50Ms: qb(0.5), builtP90Ms: qb(0.9) };
     this.decision = [];
+    this.built = [];
     this.bySource.clear();
     this.since = this.now();
     return out;

@@ -27,10 +27,40 @@ export interface RiseNativeConfig {
   fastBuyGrid?: bigint[];
   /** Grid for the approximate *Fast quotes (RISE base units for sells). */
   fastSellGrid?: bigint[];
+  /**
+   * Range mode for the *Fast quotes (overrides the grids above): `points` evenly spaced exact
+   * buy quotes over [lo, hi] lamports, and sells over the RISE range those buys produce
+   * (widened by `sellMargin`, default 2x each way). Average price is interpolated linearly in
+   * the amount, which over a narrow trade range is accurate to ~1e-7 relative (the curve is
+   * smooth there). Built once per RISE state change (prepareFast()).
+   */
+  fastRange?: { lo: bigint; hi: bigint; points?: number; sellMargin?: number };
 }
 
 const geo = (lo: number, hi: number, n: number) =>
   Array.from({ length: n }, (_, i) => BigInt(Math.round(lo * Math.pow(hi / lo, i / (n - 1)))));
+
+const lin = (lo: bigint, hi: bigint, n: number): bigint[] => {
+  if (n < 2 || hi <= lo) return [lo, hi > lo ? hi : lo + 1n];
+  return Array.from({ length: n }, (_, i) => lo + ((hi - lo) * BigInt(i)) / BigInt(n - 1));
+};
+
+/** Cheap content fingerprint of the quote-relevant accounts (bytes + lamports + owner). */
+function fingerprintOf(accs: (AccountInfo<Buffer> | null)[], deploy: bigint | null): Buffer {
+  const parts: Buffer[] = [];
+  const head = Buffer.alloc(8);
+  head.writeBigInt64LE(deploy ?? -1n);
+  parts.push(head);
+  for (const a of accs) {
+    const h = Buffer.alloc(9);
+    if (a) {
+      h[0] = 1;
+      h.writeDoubleLE(a.lamports, 1);
+      parts.push(h, a.owner.toBuffer(), Buffer.from(a.data.buffer, a.data.byteOffset, a.data.byteLength));
+    } else parts.push(h);
+  }
+  return Buffer.concat(parts);
+}
 
 const PROGRAM_CHECK_MS = 30_000;
 const PROGRAMDATA_HEADER = 45; // u32 tag(3) | u64 deploy slot | Option<Pubkey> authority
@@ -49,13 +79,55 @@ export class RiseNative implements RiseVenue {
   private cache = new Map<string, bigint | null>();
   private fastBuy: [bigint, bigint][] | null = null;
   private fastSell: [bigint, bigint][] | null = null;
-  private readonly buyGrid: bigint[];
-  private readonly sellGrid: bigint[];
+  private buyGrid: bigint[];
+  private sellGrid: bigint[];
+  private fastRange: RiseNativeConfig["fastRange"];
+  /** Bumped whenever the account state that quotes depend on changes (or the program does). */
+  stateVersion = 0;
+  private fingerprint: Buffer | null = null;
+  /** Exact oracle calls since construction (bench / tests). */
+  exactCalls = 0;
 
   constructor(private readonly cfg: RiseNativeConfig = {}) {
     this.acc = deriveAccounts(MINT);
     this.buyGrid = cfg.fastBuyGrid ?? geo(1e6, 1e13, 22);
     this.sellGrid = cfg.fastSellGrid ?? geo(1e9, 1e16, 22);
+    this.fastRange = cfg.fastRange;
+  }
+
+  /** Switch the *Fast quotes to range mode (see RiseNativeConfig.fastRange). */
+  setFastRange(r: RiseNativeConfig["fastRange"]): void {
+    this.fastRange = r;
+    this.fastBuy = this.fastSell = null;
+  }
+
+  /** Build the *Fast grids now (warm-up right after update(), so the decision path does not pay for it). */
+  prepareFast(): void {
+    if (!this.fastBuy) this.fastBuy = this.buildBuyGrid();
+    if (!this.fastSell) this.fastSell = this.buildSellGrid();
+  }
+
+  /** True when the fast grids for the current state are built. */
+  get fastReady(): boolean {
+    return this.fastBuy !== null && this.fastSell !== null;
+  }
+
+  private buildBuyGrid(): [bigint, bigint][] {
+    const r = this.fastRange;
+    if (!r) return this.buildGrid("buy", this.buyGrid);
+    return this.buildGrid("buy", lin(r.lo, r.hi, r.points ?? 3));
+  }
+
+  private buildSellGrid(): [bigint, bigint][] {
+    const r = this.fastRange;
+    if (!r) return this.buildGrid("sell", this.sellGrid);
+    if (!this.fastBuy) this.fastBuy = this.buildBuyGrid();
+    const b = this.fastBuy;
+    if (b.length < 2) return [];
+    const m = BigInt(Math.round((r.sellMargin ?? 2) * 1000));
+    const lo = (b[0][1] * 1000n) / m;
+    const hi = (b[b.length - 1][1] * m) / 1000n;
+    return this.buildGrid("sell", lin(lo, hi, r.points ?? 3));
   }
 
   /** Optional eager setup: fetch the program binary and an initial snapshot. */
@@ -88,8 +160,6 @@ export class RiseNative implements RiseVenue {
 
   update(slot: number, infos: Map<string, AccountInfo<Buffer> | null>): void {
     this.slot = slot;
-    this.cache.clear();
-    this.fastBuy = this.fastSell = null;
 
     // The ~1.15 MB programdata account is NOT part of accounts() (it would be
     // re-downloaded every tick). Instead check its 45-byte header periodically and
@@ -106,6 +176,17 @@ export class RiseNative implements RiseVenue {
       }
     }
     if (Date.now() - this.lastProgramCheck > PROGRAM_CHECK_MS) this.checkProgram();
+
+    // Quotes are a pure function of these accounts (and the program; NOTES.md: the clock does
+    // not matter). If none changed, keep the memoized quotes and fast grids and skip the
+    // worker round trip entirely.
+    const keys = [this.acc.market, this.acc.vault, this.acc.creatorClaim, this.acc.teamVault, this.acc.reflectionVault, MINT, WSOL, RENT_SYSVAR];
+    const fp = fingerprintOf(keys.map((k) => infos.get(k.toBase58()) ?? null), this.programDeploySlot);
+    if (this.fingerprint && this.fingerprint.equals(fp) && this.oracle.ready) return;
+    this.fingerprint = fp;
+    this.stateVersion++;
+    this.cache.clear();
+    this.fastBuy = this.fastSell = null;
 
     const m = infos.get(this.acc.market.toBase58());
     this.market = m ? decodeMarket(Buffer.from(m.data)) : null;
@@ -135,6 +216,8 @@ export class RiseNative implements RiseVenue {
       if (deploy === this.programDeploySlot) return;
       this.programStale = true;
       this.cache.clear();
+      this.fingerprint = null;
+      this.stateVersion++;
       const a = await conn.getAccountInfo(this.acc.programData, "confirmed");
       if (a && a.data.length > PROGRAMDATA_HEADER) {
         this.oracle.setProgram(Buffer.from(a.data.subarray(PROGRAMDATA_HEADER)));
@@ -142,6 +225,8 @@ export class RiseNative implements RiseVenue {
         this.programStale = false;
         this.cache.clear();
         this.fastBuy = this.fastSell = null;
+        this.fingerprint = null;
+        this.stateVersion++;
       }
     })().catch(() => { /* retried on next check */ }).finally(() => { this.fetching = false; });
   }
@@ -155,6 +240,7 @@ export class RiseNative implements RiseVenue {
     const key = kind + amount.toString();
     const hit = this.cache.get(key);
     if (hit !== undefined) return hit;
+    this.exactCalls++;
     const r = this.oracle.quote(kind, amount);
     const out = r.out !== null && r.out > 0n ? r.out : null;
     this.cache.set(key, out);
@@ -176,13 +262,29 @@ export class RiseNative implements RiseVenue {
    * Outside the grid it falls back to the exact quote.
    */
   quoteBuyFast(lamportsIn: bigint): bigint | null {
-    if (!this.fastBuy) this.fastBuy = this.buildGrid("buy", this.buyGrid);
-    return this.interp(this.fastBuy, lamportsIn) ?? this.quoteBuy(lamportsIn);
+    if (!this.fastBuy) this.fastBuy = this.buildBuyGrid();
+    return this.approx(this.fastBuy, lamportsIn) ?? this.quoteBuy(lamportsIn);
   }
 
   quoteSellFast(riseIn: bigint): bigint | null {
-    if (!this.fastSell) this.fastSell = this.buildGrid("sell", this.sellGrid);
-    return this.interp(this.fastSell, riseIn) ?? this.quoteSell(riseIn);
+    if (!this.fastSell) this.fastSell = this.buildSellGrid();
+    return this.approx(this.fastSell, riseIn) ?? this.quoteSell(riseIn);
+  }
+
+  private approx(pts: [bigint, bigint][], x: bigint): bigint | null {
+    if (!this.fastRange) return this.interp(pts, x);
+    // range mode: linear-in-amount average price, extrapolated up to 4x beyond the grid ends
+    if (pts.length < 2 || x <= 0n || x * 4n < pts[0][0] || x > pts[pts.length - 1][0] * 4n) return null;
+    let i = 1;
+    while (i < pts.length - 1 && pts[i][0] < x) i++;
+    const [x0, y0] = pts[i - 1];
+    const [x1, y1] = pts[i];
+    if (x === x1) return y1;
+    if (x === x0) return y0;
+    const p0 = Number(y0) / Number(x0), p1 = Number(y1) / Number(x1);
+    const p = p0 + ((p1 - p0) * (Number(x) - Number(x0))) / (Number(x1) - Number(x0));
+    const y = Math.floor(p * Number(x));
+    return y > 0 ? BigInt(y) : null;
   }
 
   private buildGrid(kind: "buy" | "sell", grid: bigint[]): [bigint, bigint][] {
