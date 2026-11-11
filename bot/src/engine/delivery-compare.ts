@@ -27,8 +27,11 @@ export { assertLiveAbAllowed };
 // ---------------- A/B sender (live only, via main.ts DELIVERY=ab) ----------------
 
 /**
- * Alternates rpc / jito per prepared tx. prepare() picks the arm (jito: adds the tip
- * ix) and remembers it by message hash; send() routes the exact tx to that arm.
+ * Alternates rpc / jito per submission. The engine asks tipsNext() BEFORE optimizing, so the
+ * Jito arm's plan carries a tip budget and tx.ts builds the tip ix with the tip covered by the
+ * on-chain min-out (never an unbudgeted tip appended afterwards). prepare() routes a built tx
+ * with a tip to the Jito arm (which verifies the tip ix) and one without a tip to the RPC arm,
+ * remembering the arm by message hash; send() routes the exact tx to that arm.
  */
 export class AlternatingSender implements Sender, TxPreparer {
   readonly name = "ab";
@@ -36,8 +39,19 @@ export class AlternatingSender implements Sender, TxPreparer {
   private arm = new Map<string, "rpc" | "jito">();
   constructor(private rpc: Sender, private jito: Sender & TxPreparer) {}
 
+  /** Whether the next submission is the Jito arm (its plan must budget a tip). */
+  tipsNext(): boolean {
+    return this.n % 2 === 1;
+  }
+
+  async tipAccount(): Promise<PublicKey> {
+    if (!this.jito.tipAccount) throw new Error("ab: jito arm has no tip accounts");
+    return this.jito.tipAccount();
+  }
+
   async prepare(b: BuiltTx, ctx: PrepareContext): Promise<PreparedTx | { reject: string }> {
-    const useJito = this.n++ % 2 === 1;
+    const useJito = (b.tipLamports ?? 0n) > 0n;
+    this.n++;
     const p = useJito ? await this.jito.prepare(b, ctx) : { tx: b.tx, instructions: b.instructions, tipLamports: 0n };
     if (!("reject" in p)) this.arm.set(messageHash(p.tx), useJito ? "jito" : "rpc");
     return p;

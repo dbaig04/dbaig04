@@ -12,7 +12,7 @@ import { ArbEngine } from "../src/engine/engine.js";
 import { Ledger, type Realized } from "../src/engine/ledger.js";
 import { RiskGuard } from "../src/engine/risk.js";
 import {
-  GuardedSender, JitoClient, JitoSender, SimRegistry, signatureOf, SubmitRefused, tipInstruction, type FetchLike, type Sender, type SendResult,
+  chooseJitoTip, GuardedSender, JitoClient, JitoSender, SimRegistry, signatureOf, SubmitRefused, tipInstruction, type FetchLike, type Sender, type SendResult,
 } from "../src/engine/sender.js";
 import { AlternatingSender, assertLiveAbAllowed, costRow } from "../src/engine/delivery-compare.js";
 import { atasFor } from "../src/engine/setup.js";
@@ -69,30 +69,21 @@ function fakeBuilt(payer: PublicKey): BuiltTx {
   return { tx, instructions, recentBlockhash: "11111111111111111111111111111111", feeLamports: 5_000n, cuLimit: 300_000 } as unknown as BuiltTx;
 }
 
-test("JitoSender.prepare: tip transfer ix to a cached random tip account, within the caps", async () => {
+test("JitoSender.prepare: never appends an unbudgeted tip (on-chain min-out would not cover it); chooseJitoTip caps", async () => {
   const { f, calls } = fakeJitoFetch();
   const kp = Keypair.generate();
   const client = new JitoClient({ url: "https://jito.example", fetch: f });
   const j = new JitoSender({} as never, { mode: "simulate", client, maxPriorityFeeLamports: 50_000n, maxTipLamports: 50_000n, maxExecCostBpsOfProfit: 1_000n, rand: () => 0.99 });
   const ctx = { payer: kp.publicKey, signer: kp, expectedGrossProfit: 2_000_000n, priorityFeeLamports: 50_000n, baseFeeLamports: 5_000n };
+  // audit regression: a built tx without a budgeted tip is refused, not tipped after the fact
   const p = await j.prepare(fakeBuilt(kp.publicKey), ctx);
-  assert.ok(!("reject" in p));
-  assert.equal(p.tipLamports, 50_000n);
-  assert.equal(p.tipAccount, TIP_ACCOUNTS[1]);
-  const ix = p.instructions.at(-1)!;
-  assert.ok(ix.programId.equals(SystemProgram.programId));
-  assert.equal(ix.data.readUInt32LE(0), 2, "SystemProgram::Transfer");
-  assert.equal(ix.data.readBigUInt64LE(4), 50_000n);
-  assert.ok(ix.keys[0].pubkey.equals(kp.publicKey) && ix.keys[0].isSigner && ix.keys[0].isWritable);
-  assert.equal(ix.keys[1].pubkey.toBase58(), TIP_ACCOUNTS[1]);
-  assert.ok(p.tx.signatures[0].some((b) => b !== 0), "re-signed");
-  // 10% share binds: gross 400,000 → budget 40,000 − priority 30,000 = 10,000
-  const p2 = await j.prepare(fakeBuilt(kp.publicKey), { ...ctx, expectedGrossProfit: 400_000n, priorityFeeLamports: 30_000n });
-  assert.ok(!("reject" in p2) && p2.tipLamports === 10_000n);
-  // below Jito's 1000-lamport minimum → reject
-  const p3 = await j.prepare(fakeBuilt(kp.publicKey), { ...ctx, expectedGrossProfit: 300_000n, priorityFeeLamports: 29_500n });
-  assert.ok("reject" in p3);
-  assert.equal(calls.filter((c) => c.method === "getTipAccounts").length, 1, "tip accounts cached");
+  assert.ok("reject" in p && /no tip budget/.test(p.reject));
+  assert.equal((await j.tipAccount()).toBase58(), TIP_ACCOUNTS[1]);
+  // the share/caps helper itself (still used for cost modelling)
+  const caps = { maxPriorityFeeLamports: 50_000n, maxTipLamports: 50_000n, maxExecCostBpsOfProfit: 1_000n };
+  assert.equal(chooseJitoTip(ctx, caps), 50_000n);
+  assert.equal(chooseJitoTip({ ...ctx, expectedGrossProfit: 400_000n, priorityFeeLamports: 30_000n }, caps), 10_000n);
+  assert.equal(chooseJitoTip({ ...ctx, expectedGrossProfit: 300_000n, priorityFeeLamports: 29_500n }, caps), null);
   assert.equal(calls.filter((c) => c.method === "sendBundle").length, 0);
   assert.throws(() => tipInstruction(kp.publicKey, kp.publicKey, 999n), /minimum/);
 });
@@ -308,13 +299,128 @@ test("delivery-compare: live A/B gate, cost model (RPC failures pay, Jito failur
   jito.send = mk("jito").send;
   const ab = new AlternatingSender(mk("rpc"), jito);
   const ctx = { payer: kp.publicKey, signer: kp, expectedGrossProfit: 2_000_000n, priorityFeeLamports: 0n, baseFeeLamports: 5_000n };
+  assert.equal(ab.tipsNext(), false, "first arm: rpc (plan without tip)");
   const b1 = fakeBuilt(kp.publicKey); b1.tx.sign([kp]);
   const p1 = await ab.prepare(b1, ctx);
-  const p2 = await ab.prepare(fakeBuilt(kp.publicKey), ctx);
+  assert.equal(ab.tipsNext(), true, "second arm: jito (engine plans a tip budget)");
+  // the jito arm receives a tx whose tip ix tx.ts built from the plan's budget
+  const tipTo = await ab.tipAccount();
+  const fb = fakeBuilt(kp.publicKey);
+  const tipIx = SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: tipTo, lamports: 20_000n });
+  const instructions = [...fb.instructions, tipIx];
+  const b2 = { ...fb, instructions, tx: new VersionedTransaction(new TransactionMessage({ payerKey: kp.publicKey, recentBlockhash: fb.recentBlockhash, instructions }).compileToLegacyMessage()), tipLamports: 20_000n } as BuiltTx;
+  b2.tx.sign([kp]);
+  const p2 = await ab.prepare(b2, ctx);
   assert.ok(!("reject" in p1) && !("reject" in p2));
   assert.equal(p1.tipLamports, 0n);
-  assert.ok(p2.tipLamports > 0n);
+  assert.equal(p2.tipLamports, 20_000n);
+  assert.equal(p2.instructions.length, 3, "no second (unbudgeted) tip appended");
   assert.equal((await ab.send(p2.tx, 1)).delivery, "jito");
   assert.equal((await ab.send(p1.tx, 1)).delivery, "rpc");
   assert.deepEqual(used, ["jito", "rpc"]);
+});
+
+// ---------------- audit regressions ----------------
+
+test("audit: DELIVERY=ab Jito arm budgets its tip, so the on-chain final min-out covers base+priority+tip+floor", async () => {
+  const kp = Keypair.generate();
+  const v = venues();
+  const c = chain(v, kp.publicKey, { wsol: 10_000_000_000n, rise: 0n, native: 1_000_000_000n });
+  const s = setup({ user: kp.publicKey, mode: "live", keypair: kp, delivery: "ab" });
+  const { f } = fakeJitoFetch();
+  const jito = new JitoSender({} as never, { mode: "live", client: new JitoClient({ url: "https://j", fetch: f }), maxPriorityFeeLamports: 50_000n, maxTipLamports: 50_000n, maxExecCostBpsOfProfit: 1_000n });
+  const sentVia: string[] = [];
+  const confirm = (name: string) => async (tx: VersionedTransaction): Promise<SendResult> => { sentVia.push(name); return { signature: signatureOf(tx), status: "expired", broadcasts: 1 }; };
+  jito.send = confirm("jito");
+  const ab = new AlternatingSender({ name: "rpc", send: confirm("rpc") }, jito);
+  try {
+    const eng = new ArbEngine({ conn: c.conn as never, ...v, cfg: s.cfg, ledger: s.ledger, risk: s.risk, sender: ab, preparer: ab, log: () => {} });
+    assert.equal((await eng.tick()).status, "sent");
+    c.bump();
+    const r2 = await eng.tick();
+    eng.close?.();
+    assert.equal(r2.status, "sent", JSON.stringify(Ledger.read(s.ledger.path).filter((e) => e.type === "risk")));
+    assert.deepEqual(sentVia, ["rpc", "jito"]);
+    const subs = Ledger.read(s.ledger.path).filter((e) => e.type === "submission");
+    const j = subs[1];
+    const tip = BigInt(j.tip as string), fee = BigInt(j.fee as string), minOut = BigInt(j.finalMinOut as string);
+    assert.ok(tip > 0n, "jito arm pays a tip");
+    const p = r2.plan!;
+    assert.equal(p.fees.tipLamports, tip, "tip is the plan's budgeted tip");
+    assert.ok(minOut >= p.lamportsIn + p.minOutPad + 100_000n + fee + tip, `min-out ${minOut} covers in ${p.lamportsIn} + floor + fee ${fee} + tip ${tip}`);
+    assert.equal(BigInt(subs[0].tip as string), 0n);
+  } finally { s.done(); }
+});
+
+/** CpDlmm whose exact-out buy returns a host-fee rebate (netIn < inp), like MeteoraDlmm. */
+class RebateDlmm extends CpDlmm {
+  quoteExactOut(side: "sellRise" | "buyRise", out: bigint) {
+    const q = super.quoteExactOut(side, out);
+    return q && { ...q, netIn: q.inp - q.inp / 50n };
+  }
+}
+
+test("audit: max-input risk gate applies to the GROSS amount leaving the wallet (buyThenRedeem DLMM max-in), not the net-of-rebate spend", async () => {
+  const user = new PublicKey(REFERENCE_WALLET);
+  const mk = () => ({ rise: new LinearRise(1_000_000_000n, 10n), dlmm: new RebateDlmm(950_000_000_000n, 1_000_000_000_000n, 25n) });
+  const v1 = mk();
+  const c1 = chain(v1 as never, user, { wsol: 10_000_000_000n, rise: 0n, native: 1_000_000_000n });
+  const s1 = setup({ user, maxTradeLamports: 1_000_000_000n }, { maxInputLamports: 1_000_000_000n });
+  let plan;
+  try {
+    const e1 = new ArbEngine({ conn: c1.conn as never, ...v1, cfg: s1.cfg, ledger: s1.ledger, risk: s1.risk, log: () => {} });
+    const r = await e1.tick();
+    e1.close?.();
+    plan = r.plan!;
+    assert.equal(plan.direction, "buyThenRedeem");
+    assert.ok(plan.grossIn > plan.lamportsIn, "rebate makes net < gross");
+  } finally { s1.done(); }
+  const v2 = mk();
+  const c2 = chain(v2 as never, user, { wsol: 10_000_000_000n, rise: 0n, native: 1_000_000_000n });
+  const s2 = setup({ user, maxTradeLamports: 1_000_000_000n }, { maxInputLamports: plan.grossIn - 1n });
+  try {
+    assert.ok(plan.lamportsIn <= plan.grossIn - 1n);
+    const e2 = new ArbEngine({ conn: c2.conn as never, ...v2, cfg: s2.cfg, ledger: s2.ledger, risk: s2.risk, log: () => {} });
+    const r = await e2.tick();
+    e2.close?.();
+    assert.equal(r.status, "risk-rejected");
+    assert.match(String(Ledger.read(s2.ledger.path).find((e) => e.type === "risk")!.reasons), /gross input/);
+  } finally { s2.done(); }
+});
+
+test("audit: simulated profit subtracts the in-tx tip (native transfer, invisible in Δ wSOL)", async () => {
+  const { simulateArb } = await import("../src/engine/simulate.js");
+  const acc = (x: bigint) => ({ data: [tokenAccountInfo(x).data.toString("base64"), "base64"], executable: false, lamports: 1, owner: PublicKey.default.toBase58(), rentEpoch: 0 });
+  const conn = { async simulateTransaction() { return { context: { slot: 1 }, value: { err: null, logs: [], unitsConsumed: 1000, accounts: [acc(160_000n), acc(0n)] } }; } };
+  const plan = { direction: "mintThenSell", lamportsIn: 1_000_000n, lamportsOut: 1_160_000n, leg1Quote: 0n } as never;
+  const base = { wsolAta: PublicKey.default, riseAta: PublicKey.default, wsolPre: 0n, risePre: 0n, profitFloorLamports: 100_000n, toleranceLamports: 20_000n, toleranceBps: 1_000n, feeForUnits: () => ({ cuLimit: 2000, fee: 5_000n }) };
+  assert.equal((await simulateArb(conn as never, {} as never, plan, base)).ok, true);
+  const r = await simulateArb(conn as never, {} as never, plan, { ...base, tipLamports: 60_000n });
+  assert.equal(r.ok, false);
+  assert.equal(r.simulatedProfit, 95_000n);
+  assert.match(r.reason!, /< floor/);
+});
+
+test("audit: a tx that landed (status failed) but whose getTransaction is unavailable is booked with its fee, not as a free drop", async () => {
+  const kp = Keypair.generate();
+  const v = venues();
+  const c = chain(v, kp.publicKey, { wsol: 10_000_000_000n, rise: 0n, native: 1_000_000_000n });
+  const s = setup({ user: kp.publicKey, mode: "live", keypair: kp }, { expiredCountsAsFailure: false });
+  const sender: Sender = { name: "fake", async send(tx) { return { signature: signatureOf(tx), status: "failed", err: { InstructionError: [3, { Custom: 6405 }] } as never, slot: 101, broadcasts: 1 }; } };
+  const realize = async (signature: string): Promise<Realized> => ({ signature, landed: false, success: false, err: null, kind: "other", fee: 0n, wsolDelta: 0n, riseDelta: 0n, nativeDelta: 0n, netLamports: 0n });
+  try {
+    const eng = new ArbEngine({ conn: c.conn as never, ...v, cfg: s.cfg, ledger: s.ledger, risk: s.risk, sender, realize, log: () => {} });
+    const r = await eng.tick();
+    eng.close?.();
+    assert.equal(r.status, "sent");
+    const sub = Ledger.read(s.ledger.path).find((e) => e.type === "submission")!;
+    const fee = BigInt(sub.fee as string);
+    assert.ok(fee > 0n);
+    assert.equal(s.risk.dailyExecCost, fee, "daily execution cost includes the landed failure's fee");
+    assert.equal(s.risk.dailyRealized, -fee);
+    assert.equal(s.risk.consecutiveFailures, 1, "landed failure counts even with EXPIRED_COUNTS_AS_FAILURE=0");
+    const out = Ledger.read(s.ledger.path).find((e) => e.type === "outcome")!;
+    assert.equal(out.estimated, true);
+    assert.equal(out.landed, true);
+  } finally { s.done(); }
 });

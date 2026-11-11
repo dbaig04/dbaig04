@@ -308,3 +308,31 @@ On 100 saved txs of the reference wallet (slots 467,774,316 – 468,135,211):
 - **Gross** 24.2088 SOL, **fees** 0.00464 SOL, **net** 24.2042 SOL. Win rate is 97.9%.
 - **Residual RISE**: the sum is 90,276,131,404 raw units. That equals the wallet's live RISE ATA balance, which
   cross-checks the token-delta math.
+
+## Verification status (measured 2026-11-11, simulate mode only, no live sends)
+
+| What | Result | How |
+|---|---|---|
+| RISE quotes vs mainnet `simulateTransaction` | 14/14 exact (buy 0.001–150 SOL, sell incl. round-trips) | `src/rise/validate.ts` |
+| DLMM quotes vs mainnet simulation | 25/25 exact (exact-in/out, both sides, 0.001–200 SOL) | `src/meteora/validate.ts` |
+| Two-leg arb tx composition on mainnet (reference wallet, test-only negative floor) | executes, Δ wSOL = expected exactly; quoted+1 min-out fails as it should | audit script (not shipped) |
+| Update → tx built, worst case offline (both venues changed + arb) | 12.1 ms median / 17.7–22.2 ms p95 across runs | `src/engine/bench.ts offline` |
+| Live data → decision (public RPC polling) | 0.6 / 1.4 ms; RPC poll itself 145 / 181 ms | `bench.ts live` |
+| Live `simulateTransaction` RTT (public RPC) | 50–64 ms median, 84 ms p95 | `bench.ts live --force-build` |
+| Tests | 103 pass, `tsc` clean | `npm test` |
+
+Fixed during the audit (each with a regression test):
+- `DELIVERY=ab` Jito arm added a tip the on-chain min-out did not cover.
+- Max-input risk gates checked net instead of gross spend.
+- Simulated profit ignored an in-tx Jito tip.
+- Landed txs whose `getTransaction` never returned were booked as free drops (under-counted daily cost/loss limits).
+- A hung LiteSVM worker blocked the event loop (and with it the e-stop); the oracle now uses a non-blocking pipe with a 250 ms per-quote deadline, kills and respawns the worker.
+
+Known limitations:
+- No live sends were made: submission, landing rate, landing latency, and Jito vs RPC comparison are **unmeasured**. The live A/B harness exists but requires explicit approval flags.
+- ERPC gRPC, ShredStream and SWQoS paths are tested against local mocks built from ERPC's published client/protos only — not against ERPC servers.
+- First tick per direction (and after a failed final sim) pre-simulates to learn the CU limit, adding one sim RTT (~65 ms live) before the final tx; steady state is ~2 ms.
+- DLMM variable-fee branch with non-zero volatility reference was not hit in live validation (pool was idle); it is covered by historical-tx replay only.
+- gRPC reseed after reconnect with `GRPC_COMMITMENT=processed` can miss a change made during the gap until the account changes again (default commitment is `confirmed`).
+- RISE pricing has no closed form here: quotes come from executing the deployed program; a program upgrade halts trading until restart.
+- Expired (never-landed) txs count toward the 3-consecutive-failure stop (`EXPIRED_COUNTS_AS_FAILURE=1`, conservative).

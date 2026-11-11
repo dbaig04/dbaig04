@@ -19,7 +19,7 @@ import { dirname } from "node:path";
 import { PublicKey, type AccountInfo, type Connection } from "@solana/web3.js";
 import type { RiskConfig } from "../config.js";
 import { DLMM_PROGRAM_ID, RISE_PROGRAM_ID, type Direction } from "../types.js";
-import { droppedOutcome, reconcileOutcome, type Ledger, type Realized } from "./ledger.js";
+import { droppedOutcome, reconcileOutcome, unrealizedLandedOutcome, type Ledger, type Realized } from "./ledger.js";
 import { resolveSignature, type StatusConnection } from "./sender.js";
 
 export const BPF_UPGRADEABLE_LOADER = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
@@ -109,6 +109,7 @@ export interface Freshness {
 
 export interface TradeCheck {
   direction: Direction;
+  /** GROSS lamports leg 1 may pull from the wallet (plan.grossIn: buyThenRedeem = DLMM max-in, before the host-fee rebate). */
   lamportsIn: bigint;
   /** Expected profit before all execution costs: lamportsOut − lamportsIn (same "gross" as fees.ts chooseExecutionFees). */
   expectedGrossProfit: bigint;
@@ -495,6 +496,7 @@ export async function resolveOrphanInFlight(d: {
   const res = await (d.resolve ?? resolveSignature)(d.conn, o.signature, o.lastValidBlockHeight, { log: d.log });
   let out: Realized;
   try { out = res.status === "expired" ? droppedOutcome(o.signature, "other") : await d.realize(o.signature); } catch { out = droppedOutcome(o.signature, "other"); }
+  if (!out.landed && res.status !== "expired") out = unrealizedLandedOutcome(o.signature, "other", res.status, BigInt(o.feeLamports), BigInt(o.tipLamports));
   const rec = reconcileOutcome(out, { wsolDelta: out.wsolDelta, riseDelta: out.riseDelta, feeLamports: BigInt(o.feeLamports), baseFeeLamports: d.baseFeeLamports, tipLamports: BigInt(o.tipLamports) });
   d.risk.recordOutcome({ signature: o.signature, landed: out.landed, success: out.success, feeLamports: out.fee, tipLamports: rec.tipLamports, netLamports: out.netLamports });
   d.ledger.append("outcome", {

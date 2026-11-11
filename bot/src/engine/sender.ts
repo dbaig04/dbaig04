@@ -387,21 +387,10 @@ export class JitoSender implements Sender, TxPreparer {
       if (size === null || size > PACKET_DATA_SIZE) return { reject: `tx is ${size ?? ">limit"} bytes > ${PACKET_DATA_SIZE}` };
       return { tx: b.tx, instructions: b.instructions, tipLamports: builtTip, tipAccount: last.keys[1].pubkey.toBase58() };
     }
-    // Plan carries no tip budget (e.g. A/B arm on an RPC-priced plan): append one within the caps.
-    // The on-chain min-out then does not cover the tip; the risk gate still requires net >= min after it.
-    const tip = chooseJitoTip(ctx, this.o);
-    if (tip === null) return { reject: `no jito tip >= ${JITO_MIN_TIP_LAMPORTS} fits the execution-cost budget` };
-    const acct = await this.o.client.randomTipAccount(this.o.rand);
-    let built: { tx: VersionedTransaction; instructions: TransactionInstruction[] };
-    try {
-      built = withTip(b, ctx.payer, tipInstruction(ctx.payer, acct, tip), ctx.signer);
-    } catch (e) {
-      return { reject: `tip tx cannot be built: ${(e as Error).message}` };
-    }
-    const size = txSize(built.tx);
-    if (size === null || size > PACKET_DATA_SIZE) return { reject: `tx with tip ix is ${size ?? ">limit"} bytes > ${PACKET_DATA_SIZE} (legacy tx too large for an in-tx tip)` };
-    const { tx, instructions } = built;
-    return { tx, instructions, tipLamports: tip, tipAccount: acct.toBase58() };
+    // Plan carries no tip budget. Appending a tip now would NOT be covered by the on-chain
+    // min-out (a landed tx could net floor − tip), so refuse instead (audit fix; previously the
+    // DELIVERY=ab Jito arm appended an unbudgeted tip here).
+    return { reject: "plan carries no tip budget: an in-tx Jito tip would not be covered by the on-chain min-out" };
   }
 
   async send(tx: VersionedTransaction, lastValidBlockHeight: number): Promise<SendResult> {

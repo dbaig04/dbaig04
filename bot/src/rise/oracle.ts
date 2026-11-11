@@ -7,6 +7,10 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+const QUOTE_TIMEOUT_MS = 250;   // exact quotes take ~1-2 ms; a hung worker is killed after this
+const SETUP_TIMEOUT_MS = 10_000; // program/state load
+const SLEEP = new Int32Array(new SharedArrayBuffer(4));
 import { fileURLToPath } from "node:url";
 
 const WORKER = path.join(path.dirname(fileURLToPath(import.meta.url)), "svm-worker.mjs");
@@ -92,7 +96,10 @@ export class SvmOracle {
     this.spawns++;
     // Open order matches the worker (req first, then resp) to avoid a deadlock.
     this.reqFd = fs.openSync(req, "w");
-    this.respFd = fs.openSync(resp, "r");
+    // Non-blocking read end + deadline in send(): a hung worker must not freeze the
+    // event loop (kill file, signals, rebroadcast all depend on it).
+    this.respFd = fs.openSync(resp, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    this.writerSeen = false;
     this.pending = "";
     if (this.program && !this.send({ op: "program", data: this.program.toString("base64") })) return false;
     if (this.state && !this.send({ op: "state", ...this.state })) return false;
@@ -109,8 +116,14 @@ export class SvmOracle {
     this.dir = "";
   }
 
+  private writerSeen = false;
+  /** Requests abandoned because the worker exceeded its deadline (worker is killed and respawned). */
+  timeouts = 0;
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private send(msg: object): any | null {
+    const op = (msg as { op?: string }).op;
+    const deadline = Date.now() + (op === "quote" ? QUOTE_TIMEOUT_MS : SETUP_TIMEOUT_MS);
     try {
       const line = Buffer.from(JSON.stringify(msg) + "\n");
       let off = 0;
@@ -123,9 +136,21 @@ export class SvmOracle {
           this.pending = this.pending.slice(i + 1);
           return JSON.parse(out);
         }
-        const n = fs.readSync(this.respFd, chunk, 0, chunk.length, null);
-        if (n === 0) throw new Error("worker EOF");
-        this.pending += chunk.toString("utf8", 0, n);
+        let n = -1;
+        try {
+          n = fs.readSync(this.respFd, chunk, 0, chunk.length, null);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "EAGAIN") throw e;
+        }
+        if (n > 0) {
+          this.writerSeen = true;
+          this.pending += chunk.toString("utf8", 0, n);
+          continue;
+        }
+        // n === 0: EOF once the worker had connected (it died); before that it just hasn't opened its end yet.
+        if (n === 0 && this.writerSeen) throw new Error("worker EOF");
+        if (Date.now() > deadline) { this.timeouts++; throw new Error(`worker timeout (${op})`); }
+        Atomics.wait(SLEEP, 0, 0, 0.05); // ~50 µs; quotes take ~1-2 ms
       }
     } catch {
       this.teardown();

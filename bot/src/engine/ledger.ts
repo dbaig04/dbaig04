@@ -133,6 +133,18 @@ export function droppedOutcome(signature: string, kind: Direction | "other"): Re
   return { signature, landed: false, success: false, err: null, kind, fee: 0n, wsolDelta: 0n, riseDelta: 0n, nativeDelta: 0n, netLamports: 0n };
 }
 
+/**
+ * The sender saw the tx land (status confirmed / failed) but getTransaction never returned it.
+ * Recording it as "dropped" would book 0 cost and let the daily execution-cost / loss stops
+ * under-count. Instead record it as landed with the budgeted fee (+ tip on success) as the
+ * only, worst-case, SOL change; token deltas unknown (0). Flagged `estimated`.
+ */
+export function unrealizedLandedOutcome(signature: string, kind: Direction | "other", status: "confirmed" | "failed", feeLamports: bigint, tipLamports: bigint): Realized & { estimated: true } {
+  const success = status === "confirmed";
+  const nativeDelta = -(feeLamports + (success ? tipLamports : 0n));
+  return { signature, landed: true, success, err: success ? null : "unknown (getTransaction unavailable)", kind, fee: feeLamports, wsolDelta: 0n, riseDelta: 0n, nativeDelta, netLamports: nativeDelta, estimated: true };
+}
+
 /** Raw JSON-RPC getTransaction (same shape as saved reference txs). */
 export async function fetchRawTx(conn: Connection, signature: string, commitment: "confirmed" | "finalized" = "confirmed"): Promise<RawTx | null> {
   const rpc = (conn as unknown as { _rpcRequest: (m: string, a: unknown[]) => Promise<{ result?: RawTx | null; error?: { message: string } }> })._rpcRequest;

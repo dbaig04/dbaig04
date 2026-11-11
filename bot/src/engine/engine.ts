@@ -13,7 +13,7 @@ import { LatencyStats, latencyRecord, type LatencyMarks } from "./latency.js";
 import { buildArbTx, cuFromSim, cuPriceFor, estimatedTxCost, SIM_CU, txFee, type BuiltTx } from "./tx.js";
 import { simulateArb, type SimConnection, type SimResult } from "./simulate.js";
 import { GuardedSender, messageHash, resolveSignature, signatureOf, SimRegistry, SubmitRefused, type Sender, type StatusConnection, type TxPreparer } from "./sender.js";
-import { droppedOutcome, fetchRealized, reconcileOutcome, type Ledger, type Realized } from "./ledger.js";
+import { droppedOutcome, fetchRealized, reconcileOutcome, unrealizedLandedOutcome, type Ledger, type Realized } from "./ledger.js";
 import { opportunityKey, RiskGuard } from "./risk.js";
 import { atasFor } from "./setup.js";
 
@@ -120,7 +120,8 @@ export class ArbEngine {
       maxPriorityFeeLamports: maxPrio,
       maxTipLamports: r?.maxTipLamports ?? 0n,
       maxShareBps: r?.maxExecCostBpsOfProfit ?? 1_000n,
-      tipEnabled: cfg.delivery === "jito",
+      // DELIVERY=ab: the Jito arm's plan must budget the tip so the on-chain min-out covers it
+      tipEnabled: cfg.delivery === "jito" || (cfg.delivery === "ab" && (this.d.preparer as { tipsNext?(): boolean } | undefined)?.tipsNext?.() === true),
     };
   }
 
@@ -248,7 +249,8 @@ export class ArbEngine {
     // --- risk gate 1 (before building): stale state, input cap ---
     {
       const reasons = this.risk.checkFreshness({ snapshotSlot: slot, snapshotReceivedAt: marks.received, nowPerf: performance.now(), providerStale: (this.state as { stale?: boolean }).stale === true });
-      if (plan.lamportsIn > cfg.risk.maxInputLamports) reasons.push(`input ${plan.lamportsIn} > max ${cfg.risk.maxInputLamports}`);
+      // the cap applies to the GROSS lamports leg 1 may pull from the wallet (buyThenRedeem: DLMM max-in), not the net-of-rebate spend
+      if (plan.grossIn > cfg.risk.maxInputLamports) reasons.push(`gross input ${plan.grossIn} > max ${cfg.risk.maxInputLamports}`);
       if (reasons.length) return { ...this.riskReject(slot, "pre-build", reasons, { direction: plan.direction }), plan };
     }
 
@@ -277,7 +279,7 @@ export class ArbEngine {
     } else {
       const simTx = buildArbTx(plan, this.d, { ...base, cuLimit: SIM_CU });
       marks.built = performance.now();
-      sim = await simulateArb(this.d.conn, simTx.tx, plan, { ...simBase, feeForUnits: (u: number) => { const cuLimit = cuFromSim(u, cfg.cuHeadroomBps); return { cuLimit, fee: feeFor(cuLimit) }; } });
+      sim = await simulateArb(this.d.conn, simTx.tx, plan, { ...simBase, tipLamports: simTx.tipLamports, feeForUnits: (u: number) => { const cuLimit = cuFromSim(u, cfg.cuHeadroomBps); return { cuLimit, fee: feeFor(cuLimit) }; } });
       marks.preSimulated = performance.now();
       ledger.append("simulation", { slot, stage: "pre", direction: plan.direction, ...simRecord(sim) });
       if (!sim.ok) {
@@ -298,7 +300,7 @@ export class ArbEngine {
     if (learned) marks.built = builtAt;
     marks.finalBuilt = builtAt;
     // the final sim judges the exact final message at its exact fee
-    const sim2 = await simulateArb(this.d.conn, final.tx, plan, { ...simBase, feeForUnits: () => ({ cuLimit: final.cuLimit, fee: final.feeLamports }) });
+    const sim2 = await simulateArb(this.d.conn, final.tx, plan, { ...simBase, tipLamports, feeForUnits: () => ({ cuLimit: final.cuLimit, fee: final.feeLamports }) });
     marks.simulated = performance.now();
     this.learnCu(plan.direction, sim2);
     ledger.append("simulation", { slot, stage: "final", direction: plan.direction, cuLimit: final.cuLimit, cuPrice: final.cuPriceMicroLamports, fee: final.feeLamports, ...simRecord(sim2), latency: this.lat(sim2.ok ? "simulated" : "sim-rejected") });
@@ -313,7 +315,7 @@ export class ArbEngine {
     {
       const reasons = this.risk.checkFreshness({ snapshotSlot: slot, snapshotReceivedAt: marks.received, nowPerf: performance.now(), providerStale: (this.state as { stale?: boolean }).stale === true });
       reasons.push(...this.risk.checkTrade({
-        direction: plan.direction, lamportsIn: plan.lamportsIn, expectedGrossProfit: plan.lamportsOut - plan.lamportsIn,
+        direction: plan.direction, lamportsIn: plan.grossIn, expectedGrossProfit: plan.lamportsOut - plan.lamportsIn,
         baseFeeLamports: cfg.baseFeeLamports, priorityFeeLamports: final.feeLamports - cfg.baseFeeLamports, tipLamports,
       }));
       const signature = cfg.mode === "live" ? signatureOf(final.tx) : `unsigned:${msgHash}`;
@@ -365,6 +367,11 @@ export class ArbEngine {
       } catch (e) {
         this.log(`realize failed: ${(e as Error).message}`);
         outcome = droppedOutcome(res.signature, plan.direction);
+      }
+      if (!outcome.landed && res.status !== "expired") {
+        // landed per signature status but not retrievable: book the worst-case cost, never 0
+        this.log(`[${slot}] ${res.signature.slice(0, 16)}… is ${res.status} but getTransaction returned nothing; recording budgeted fee${res.status === "confirmed" ? " + tip" : ""} as an estimated outcome`);
+        outcome = unrealizedLandedOutcome(res.signature, plan.direction, res.status, b.feeLamports, x.tipLamports);
       }
       // reconcile actual vs expected (final sim + built fee + tip); split trading profit / execution costs / RISE residue
       const rec = reconcileOutcome(outcome, { wsolDelta: x.sim.wsolDelta ?? 0n, riseDelta: x.sim.riseDelta ?? 0n, feeLamports: b.feeLamports, baseFeeLamports: cfg.baseFeeLamports, tipLamports: x.tipLamports });

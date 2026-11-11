@@ -119,3 +119,20 @@ test("a crashing/failing worker never breaks later valid quotes", () => {
   }
   v.close();
 });
+
+test("a hung worker is killed after a deadline instead of blocking the event loop", () => {
+  const v = new RiseNative();
+  v.update(snap.slot, snapshotInfos(v));
+  const want = v.oracle.quote("buy", 1_000_000_000n).out;
+  assert.ok(want !== null);
+  // Freeze the worker (simulates a hang). Before the fix, readSync blocked forever here.
+  const child = (v.oracle as unknown as { child: { pid: number } }).child;
+  process.kill(child.pid, "SIGSTOP");
+  const t0 = Date.now();
+  const r = v.oracle.quote("buy", 1_000_000_000n); // times out, respawns, retries once
+  const ms = Date.now() - t0;
+  assert.equal(r.out, want);
+  assert.equal(v.oracle.timeouts, 1);
+  assert.ok(ms < 5_000, `took ${ms} ms`);
+  v.close();
+});

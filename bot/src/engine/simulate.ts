@@ -1,5 +1,5 @@
 // Mandatory pre-send simulation. Requests post-state of the user's wSOL and RISE
-// token accounts, computes simulated profit = Δ wSOL − fee, and rejects on any
+// token accounts, computes simulated profit = Δ wSOL − fee − tip, and rejects on any
 // sim error, profit below floor, RISE loss, or deviation from the quote.
 import type { Commitment, Connection, PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { decodeTokenAmount } from "./state.js";
@@ -18,6 +18,8 @@ export interface SimParams {
   toleranceBps: bigint;
   /** Fee the final tx will pay, given the CU limit derived from the sim. */
   feeForUnits: (unitsConsumed: number) => { cuLimit: number; fee: bigint };
+  /** In-tx tip (native SOL transfer, Jito). Not visible in Δ wSOL, so it is subtracted explicitly. */
+  tipLamports?: bigint;
   commitment?: Commitment;
 }
 
@@ -33,7 +35,7 @@ export interface SimResult {
   risePost?: bigint;
   wsolDelta?: bigint;
   riseDelta?: bigint;
-  /** Δ wSOL − fee */
+  /** Δ wSOL − fee − tip */
   simulatedProfit?: bigint;
   /** Quote-implied profit at the same fee. */
   expectedProfit?: bigint;
@@ -66,8 +68,9 @@ export async function simulateArb(conn: SimConnection, tx: VersionedTransaction,
   const wsolDelta = wsolPost - p.wsolPre;
   const riseDelta = risePost - p.risePre;
   const { cuLimit, fee } = p.feeForUnits(v.unitsConsumed);
-  const simulatedProfit = wsolDelta - fee;
-  const expectedProfit = plan.lamportsOut - plan.lamportsIn - fee;
+  const tip = p.tipLamports ?? 0n;
+  const simulatedProfit = wsolDelta - fee - tip;
+  const expectedProfit = plan.lamportsOut - plan.lamportsIn - fee - tip;
   const r: SimResult = { ...base, cuLimit, fee, wsolPost, risePost, wsolDelta, riseDelta, simulatedProfit, expectedProfit };
   if (riseDelta < 0n) return { ...r, reason: `sim loses RISE: ${riseDelta}` };
   if (simulatedProfit < p.profitFloorLamports) return { ...r, reason: `sim profit ${simulatedProfit} < floor ${p.profitFloorLamports}` };

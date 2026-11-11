@@ -276,3 +276,20 @@ test("startup: an orphaned in-flight tx is resolved (status + getTransaction) an
     assert.equal(row.tradingProfit, "400000");
   } finally { t.done(); }
 });
+
+test("audit: orphan that landed (status failed) but getTransaction unavailable is booked with its persisted fee", async () => {
+  const t = tmp();
+  try {
+    const g = guard(t.limits);
+    const k = key();
+    g.beginSubmission(k, meta);
+    const g2 = guard(t.limits);
+    const ledger = new Ledger(join(t.dir, "l.jsonl"));
+    const resolve = async (): Promise<SendResult> => ({ signature: k.signature, status: "failed", err: {} as never, slot: 5, broadcasts: 0 });
+    const dropped: Realized = { signature: k.signature, landed: false, success: false, err: null, kind: "other", fee: 0n, wsolDelta: 0n, riseDelta: 0n, nativeDelta: 0n, netLamports: 0n };
+    await resolveOrphanInFlight({ risk: g2, conn: {} as never, ledger, realize: async () => dropped, baseFeeLamports: 5_000n, user: "u", resolve: resolve as never, log: () => {} });
+    assert.equal(g2.dailyExecCost, 55_000n);
+    assert.equal(g2.consecutiveFailures, 1);
+    assert.equal(Ledger.read(ledger.path).at(-1)!.estimated, true);
+  } finally { t.done(); }
+});
