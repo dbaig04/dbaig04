@@ -14,10 +14,12 @@ Both legs run atomically, so the profit floor is **enforced on-chain**:
 
 - leg 1's limit is the exactly quoted amount: the RISE min-out of the Buy, or the max-in of the DLMM exact-out buy.
   `LEG_SLIPPAGE_BPS` can loosen it (default 0).
-- the final leg's min-out is `lamportsIn + PROFIT_FLOOR_LAMPORTS + txCost`, where txCost is the base fee plus the
-  priority fee. A tx that lands therefore always clears the floor *after fees*. If the min-out fails the tx reverts and
-  only the fee is lost. The reference wallet uses `+100,000` without the fee. This bot also covers the fee, in both
-  directions.
+- the final leg's min-out is `lamportsIn + pad + execution cost + floor`, where lamportsIn is the **net** wSOL spend
+  (buyThenRedeem: DLMM max-in minus the host-fee rebate paid back to the user's own input account), execution cost is
+  base + priority + tip as chosen for this trade (`src/engine/fees.ts`), and pad covers the part of that SOL rebate a
+  fee-rate drop before landing could remove (0 for mintThenSell). A tx that lands therefore always clears the floor
+  *after every cost*. If the min-out fails the tx reverts and only the fee is lost. The reference wallet uses
+  `+100,000` without the fee. This bot also covers the fee, in both directions.
 
 Funds stay in a persistent **wSOL ATA** (classic Token program) and a **RISE ATA** (Token-2022). There is no
 wrap or unwrap per trade.
@@ -175,12 +177,18 @@ src/engine/
                         pinned with minContextSlot) for the union of all sources' accounts(); refetches in the same
                         tick if a source's account set grows (e.g. bin arrays). TokenBalances = user's wSOL/RISE ATAs.
                         StateProvider interface: PollingProvider (= StateManager, default) | GrpcProvider (src/feeds).
-  optimizer.ts          per direction: log-spaced scan (+ linear points) → golden-section in the brackets of the
-                        top-5 grid points → integer pattern search → exhaustive ±32 window. Domain is lamports in
-                        (mintThenSell) or exact RISE out (buyThenRedeem, bounded by binary search so that
-                        lamports in ≤ min(max trade, wSOL balance, max wSOL)). Profit = out − in − txCost, using
-                        worst-case amounts under the configured slippage.
-  tx.ts                 compute-budget ixs + leg ixs (venue.*Ix) with the mins above; fee math
+  optimizer.ts          two-stage per direction. Stage 1 on RISE *Fast quotes (3-point exact grid over the allowed
+                        size range, rebuilt only when RISE state changes) + exact DLMM quotes: grid → golden-section
+                        in the best brackets; skip the direction (0 exact RISE calls) if even that estimate cannot
+                        reach the floor. Stage 2: exact RISE quote at the best ≤2 candidates + one locally corrected
+                        re-centre (≤4 exact calls). Objective = NET profit: out − net in (DLMM netIn) − base −
+                        priority − tip; RISE host-fee rebate (mintThenSell) is reported as residual, not profit.
+                        Domain is lamports in (mintThenSell) or exact RISE out (buyThenRedeem, gross in ≤ cap).
+  fees.ts               chooseExecutionFees(): priority ≤ 50k, tip ≤ 50k (0 without a tipping sender),
+                        priority + tip ≤ 10% of expected profit before execution costs (pure, shared with senders)
+  tx.ts                 compute-budget ixs + leg ixs (venue.*Ix) with the mins above [+ tip transfer]; fee math
+  blockhash.ts          background blockhash cache (refresh every 2 s, stale after 20 s): no RPC on the hot path
+  bench.ts              record mainnet snapshots / offline stage timings / live simulate-mode run → BENCH.md
   simulate.ts           simulateTransaction (sigVerify false, replaceRecentBlockhash, post-state of the wSOL and
                         RISE ATAs) → decoded SPL amounts → simulated profit + checks + CU limit
   latency.ts            per-tick latency marks (update received → refreshed → decision → simulated → sent)
@@ -191,7 +199,9 @@ src/engine/
                         ProgramUpgradeGuard (RISE + DLMM programdata), crash-orphan resolution
   estop.ts              emergency stop helper (kill file + SIGUSR1; status / clear / clear-failures)
   delivery-compare.ts   RPC vs Jito cost model, read-only fee/tip data, gated live A/B -> DELIVERY.md
-  engine.ts             ArbEngine.tick(): refresh → optimize both → build → sim → final sim → [live] send → realize
+  engine.ts             ArbEngine.tick(): refresh → optimize both (cached while neither venue changed) → build
+                        (cached blockhash; CU learned from the last final sim, else pre-sim) → final sim → [live]
+                        send → realize
   ledger.ts             JSONL ledger + realized-PnL math from getTransaction (actual fee, Δ wSOL / Δ RISE / Δ native)
   report.ts             PnL report for the ledger, or for a directory of saved reference-wallet txs
   setup.ts              one-time ATA creation (Token + Token-2022) and SOL wrap, gated by CONFIRM

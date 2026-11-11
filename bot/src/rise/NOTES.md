@@ -46,17 +46,30 @@ Measured with the worker warm:
 
 | Step | Time |
 |---|---|
-| Exact buy quote | ≈ 3.5–3.9 ms |
-| Exact sell quote | ≈ 2.3–2.9 ms |
+| Exact buy quote | ≈ 1.2–1.9 ms (was 3.5–3.9 ms) |
+| Exact sell quote | ≈ 1.0–1.6 ms (was 2.3–2.9 ms) |
 | Memoized repeat quote | ≈ 0 |
-| `update()` (warm) | ≈ 3 ms |
+| `update()` (warm, state changed) | ≈ 1–3 ms |
+| `update()` (no quote-relevant account changed) | ≈ 0.1 ms: memo + fast grids kept, no worker round trip |
 | First `update()` | ≈ 0.3–0.5 s (spawn + program load) |
 
-`quoteBuyFast` / `quoteSellFast` are approximate. They interpolate the average price over 22 exact grid points, log-spaced:
-- buys: 1e6 to 1e13 lamports;
-- sells: 1e9 to 1e16 RISE units.
+Where an exact quote's time went: `Transaction.serialize()` (message compile) ≈ 1.2 ms, the LiteSVM simulation
+≈ 1.0 ms, the rest IPC/JSON. The worker now keeps one pre-serialized quote tx per kind and only patches the u64 amount
+(`svm-worker.mjs` `template()`), so a quote is simulation + IPC.
 
-The grid is built lazily on the first fast call after each `update()`, which costs about 22 × 3.5 ms ≈ 80 ms. The observed error is about 3e-5 relative.
+`update()` fingerprints the quote-relevant accounts (bytes + lamports + owner, + program deploy slot). Quotes are a
+pure function of them (the clock does not matter, see Pricing), so an unchanged fingerprint keeps every memoized
+quote and both fast grids; `stateVersion` is bumped only on a real change (the engine's optimizer cache keys on it).
+
+`quoteBuyFast` / `quoteSellFast` are approximate. Two modes:
+- default: interpolate the average price over 22 exact grid points, log-spaced (buys 1e6 to 1e13 lamports, sells
+  1e9 to 1e16 RISE units), ~80 ms to build lazily, ~3e-5 relative error;
+- **range mode** (`fastRange` / `setFastRange`, what the engine uses): `points` (3) evenly spaced exact buys over the
+  allowed trade range [MIN_TRADE, MAX_TRADE] and 3 sells over the RISE those buys produce (widened 2x each way),
+  average price interpolated *linearly in the amount* (it is linear to ~1e-7 there: e.g. 1592.099372 →
+  1592.081388 RISE/lamport from 1e6 to 1e8 lamports). Built by `prepareFast()` once per RISE state change, 6 exact
+  quotes ≈ 8 ms; observed error vs exact on the recorded snapshots ≈ 0 (the optimizer's approximate and exact gross
+  profit agreed to the lamport). Extrapolates up to 4x beyond the grid, exact beyond that.
 
 Use the fast quotes **only for the optimizer's coarse search**. The final size must always be re-quoted with `quoteBuy` / `quoteSell`, and min-out must come from the exact quote. Outside the grid, the fast quotes fall back to the exact quote.
 

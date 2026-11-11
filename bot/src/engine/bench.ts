@@ -208,18 +208,18 @@ function offline(iters: number, baseline: boolean) {
   const BH = "11111111111111111111111111111111";
   console.log(`offline replay: ${snaps.length} recorded snapshots (slots ${snaps[0].slot}..${snaps.at(-1)!.slot}), max input 0.1 SOL, floor 100000 net`);
 
-  for (const mode of ["sequence", "cold", "perturbed"] as const) {
+  for (const mode of ["sequence", "cold", "perturbed", "cold+perturbed"] as const) {
     const t = { ingest: [] as number[], warm: [] as number[], optimize: [] as number[], decision: [] as number[], build: [] as number[], buildSigned: [] as number[], total: [] as number[] };
     let exact = 0, approx = 0, skipped = 0, opps = 0, built = 0;
     const exact0 = rise.exactCalls;
     for (let i = 0; i < iters; i++) {
       const s = snaps[i % snaps.length];
-      if (mode === "cold") { (rise as unknown as { fingerprint: Buffer | null }).fingerprint = null; (dlmm as unknown as { lbRaw: Buffer | null }).lbRaw = null; }
+      if (mode === "cold" || mode === "cold+perturbed") { (rise as unknown as { fingerprint: Buffer | null }).fingerprint = null; (dlmm as unknown as { lbRaw: Buffer | null }).lbRaw = null; }
       const t0 = performance.now();
       rise.update(s.slot, s.infos);
       dlmm.update(s.slot, s.infos);
       balances.update(s.slot, s.infos);
-      if (mode === "perturbed") perturb(dlmm, i);
+      if (mode === "perturbed" || mode === "cold+perturbed") perturb(dlmm, i);
       const t1 = performance.now();
       rise.prepareFast();
       const t2 = performance.now();

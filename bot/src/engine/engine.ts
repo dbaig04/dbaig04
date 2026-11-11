@@ -390,7 +390,9 @@ export class ArbEngine {
 }
 
 export function planRecord(p: Plan) {
-  return { direction: p.direction, slot: p.slot, lamportsIn: p.lamportsIn, rise: p.rise, lamportsOut: p.lamportsOut, expectedProfit: p.expectedProfit, txCostLamports: p.txCostLamports, leg1Quote: p.leg1Quote, binArrays: p.binArrays.map((b) => b.toBase58()) };
+  return { direction: p.direction, slot: p.slot, lamportsIn: p.lamportsIn, rise: p.rise, lamportsOut: p.lamportsOut, expectedProfit: p.expectedProfit, txCostLamports: p.txCostLamports, leg1Quote: p.leg1Quote, binArrays: p.binArrays.map((b) => b.toBase58()),
+    // net-profit breakdown: gross (after protocol fees / impact / host rebate) -> execution costs; RISE residual is not profit
+    grossIn: p.grossIn, grossProfit: p.grossProfit, fees: p.fees, hostRebate: p.hostRebate, riseResidual: p.riseResidual, minOutPad: p.minOutPad };
 }
 
 function simRecord(s: SimResult) {
