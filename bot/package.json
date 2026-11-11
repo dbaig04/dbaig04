@@ -1,0 +1,29 @@
+{
+  "name": "bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "tsx --test test/*.test.ts",
+    "start": "tsx src/main.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@meteora-ag/dlmm": "^1.9.14",
+    "@solana/spl-token": "^0.4.15",
+    "@solana/web3.js": "^1.99.0",
+    "bn.js": "^5.2.5",
+    "bs58": "^6.0.0",
+    "decimal.js": "^10.6.0"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.2.0",
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "type": "module"
+}
