@@ -160,7 +160,43 @@ Two-leg cases (buy then sell in one tx) additionally check `applySwap()`'s model
 (active id, VA/VR/index_reference/last_update_timestamp, every bin's amount_x/amount_y) against the
 simulated lb_pair and bin array post-state.
 
-RESULTS_PLACEHOLDER
+Five full runs (slots 468159740 … 468166772). After the two SDK deviations above were fixed, every
+scored case in every run matched (25/25 in each of the last three runs). Each fee branch was exercised
+live: run 1 at elapsed 919 s (decay branch, VR = VA*0.5), runs 3-4 at elapsed 142-200 s (filter branch,
+reference kept, active bin away from index_reference), run 5 at elapsed > 1200 s (reset, VR = 0).
+Two-leg cases test the elapsed = 0 branch. Full log of the last run: `fixtures/meteora/validate-output.txt`.
+
+Last run (VR reset branch; q = quote, s = simulated; netIn = decrease of input balance after host rebate):
+
+| side | mode | amount | q netIn | s netIn | q out | s out | bins | match |
+|---|---|---|---|---|---|---|---|---|
+| buyRise | exactIn | 0.001 SOL | 999800 | 999800 | 1608480925 | 1608480925 | -743 | ✓ |
+| buyRise | exactIn | 0.1 SOL | 99979977 | 99979977 | 160594125258 | 160594125258 | -743→-742 | ✓ |
+| buyRise | exactIn | 1 SOL | 999798627 | 999798627 | 1593785376549 | 1593785376549 | -743→-742 | ✓ |
+| buyRise | exactIn | 5 SOL | 4998982355 | 4998982355 | 7926716114818 | 7926716114818 | -743→-741 | ✓ |
+| buyRise | exactIn | 25 SOL | 24993484066 | 24993484066 | 37948843390356 | 37948843390356 | -743→-732 | ✓ |
+| buyRise | exactIn | 100 SOL | 99954290829 | 99954290829 | 132401286516369 | 132401286516369 | -743→-708 | ✓ |
+| buyRise | exactIn | 200 SOL | 199900540842 | 199900540842 | 228797258693809 | 228797258693809 | -743→-679 | ✓ |
+| buyRise | exactOut | 10.12 RISE | 6292542 | 6292542 | 10123456789 | = | -743 | ✓ |
+| buyRise | exactOut | 1000.1 RISE | 627072331 | 627072331 | 1000123456789 | = | -743→-742 | ✓ |
+| buyRise | exactOut | 10k RISE | 6323927720 | 6323927720 | 10000123456789 | = | -743→-740 | ✓ |
+| buyRise | exactOut | 100k RISE | 71747233622 | 71747233622 | 100000123456789 | = | -743→-717 | ✓ |
+| buyRise | exactOut | 150k RISE | 115590177662 | 115590177662 | 150000123456789 | = | -743→-703 | ✓ |
+| sellRise | exactIn | 1.99 RISE | 1987256791 | 1987256791 | 1211142 | 1211142 | -743 | ✓ |
+| sellRise | exactIn | 101 RISE | 100967456791 | 100967456791 | 61535078 | 61535078 | -743 | ✓ |
+| sellRise | exactIn | 1001 RISE | 1000787456791 | 1000787456791 | 609934494 | 609934494 | -743 | ✓ |
+| sellRise | exactIn | 10k RISE | 9998960584023 | 9998960584023 | 6026389353 | 6026389353 | -743→-745 | ✓ |
+| sellRise | exactIn | 30k RISE | 29994267599573 | 29994267599573 | 17648006907 | 17648006907 | -743→-750 | ✓ |
+| sellRise | exactIn | 57k RISE | 56984772840441 | 56984772840441 | 32445639034 | 32445639034 | -743→-756 | ✓ |
+| sellRise | exactOut | 0.001 SOL | 1647901323 | 1647901323 | 1004321 | = | -743 | ✓ |
+| sellRise | exactOut | 0.1 SOL | 164088227518 | 164088227518 | 100004321 | = | -743 | ✓ |
+| sellRise | exactOut | 1 SOL | 1640818465647 | 1640818465647 | 1000004321 | = | -743 | ✓ |
+| sellRise | exactOut | 10 SOL | 16727492367645 | 16727492367645 | 10000004321 | = | -743→-747 | ✓ |
+| sellRise | exactOut | 30 SOL | 52394520134313 | 52394520134313 | 30000004321 | = | -743→-755 | ✓ |
+| two-leg | buy 5 SOL, sell ½ | | ΔRISE 3981980135080 | = | ΔwSOL -2537803623 | = | A→-741, B→-742 | ✓ (+ post-state) |
+| two-leg | buy 40 SOL, sell all | | ΔRISE 19173805730 | = | ΔwSOL -1231250501 | = | A→-728, B→-743 | ✓ (+ post-state) |
+
+The event amount_in, fee, protocol_fee and host_fee also matched in every case. CU ranged 41k … 434k.
 
 Historical replay (offline test): all 63 single-bin historical swaps of the reference wallet
 (`fixtures/meteora/historical-single-bin.json`, swap2 and swap_exact_out2, both directions) reproduce the
