@@ -18,6 +18,7 @@ import { ShadowRecorder } from "../engine/shadow.js";
 import { MAX_PUMPSWAP_POOL, MAX_SIM_USER, maxPairSpec, maxShredWatch, selectedDlmmPools } from "../engine/pair-venues.js";
 import { CompetitorWatcher } from "./competitors.js";
 import { RateLimitedRpc } from "./rpc.js";
+import { describeRpc, feedHealth, freshnessLines, preflightLines, probeRpc, rpcInfo } from "./feed-health.js";
 import { compare, renderShadowMd, summarizeTicks, untakenOpportunities } from "./shadow-report.js";
 import type { CompetitorArb } from "./competitors.js";
 
@@ -59,7 +60,10 @@ async function main() {
   });
   const tipsPath = process.env.JITO_TIPS_JSON;
   const tips = tipsPath && existsSync(tipsPath) ? new Set<string>(JSON.parse(readFileSync(tipsPath, "utf8")).result) : undefined;
-  const rpc = new RateLimitedRpc({ rps: Number(process.env.RESEARCH_RPS ?? 0.6), url: cfg.rpcUrl });
+  // competitor collection budget: gentle on the public endpoint, higher on a private (Pro) RPC
+  const rpcI = rpcInfo(cfg);
+  const rps = Number(process.env.RESEARCH_RPS ?? (rpcI.isPublic ? 0.6 : 5));
+  const rpc = new RateLimitedRpc({ rps, url: cfg.rpcUrl });
   const watcher = new CompetitorWatcher(rpc, { watch: dlmmPools, pumpPool: MAX_PUMPSWAP_POOL, dlmmPools, txDir: join(dir, "tx"), outPath: join(dir, "competitors.jsonl"), tips, log: console.log, intervalMs: Number(process.env.SHADOW_COMP_POLL_MS ?? 20_000) });
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
@@ -75,13 +79,39 @@ async function main() {
         "Measured here: everything in the tables. Not measured: landing (nothing is ever sent), gRPC/shred detection (no ERPC feeds configured on this host).",
         "Detection = public-RPC polling: getSlot + one getMultipleAccountsInfo per tick, every POLL_INTERVAL_MS. A competitor that back-runs a pool move in the same slot is invisible to a poller whose snapshots are several slots apart; the 'slots between consecutive snapshots' row bounds how often we can even observe pre-trade state.",
       ];
+  const feedSection = () => {
+    const h = feedHealth(rpcProbe, infra.grpc, infra.shredsUdp);
+    const fallbackTicks = ticks.filter((t) => t.stateSource === "grpc-fallback-rpc").length;
+    return [
+      "",
+      "## Feeds, RPC and update freshness (this host)",
+      "",
+      `- RPC for simulation, account reads and competitor collection: ${describeRpc(rpcI)}; competitor budget ${rps} req/s.`,
+      `- State source per tick: ${Object.entries(ticks.reduce<Record<string, number>>((m, t) => { const k = String(t.stateSource ?? "?"); m[k] = (m[k] ?? 0) + 1; return m; }, {})).map(([k, v]) => `${k} ${v}`).join(", ")}${fallbackTicks ? ` (**${fallbackTicks} ticks fell back from gRPC to RPC polling**)` : ""}.`,
+      ...preflightLines(h, Math.max(1, (Date.now() - t0) / 1000)).map((l) => `- Whole run: ${l}`),
+      `- Preflight (${preSec}s): ${pre.join(" / ")}`,
+      "",
+      ...freshnessLines(infra.grpc, infra.shredsUdp),
+    ].join("\n");
+  };
   const write = (interim: boolean) => {
     const md = renderShadowMd({ title: "MAX shadow run (PumpSwap ⇄ Meteora DLMM)", startedAt, minutes: (Date.now() - t0) / 60_000, interim, summary: summarizeTicks(ticks), comparisons: compare(ticks, watcher.arbs), competitorTxsScanned: watcher.seen, notes: [...untakenLines(ticks, watcher.arbs), ...notes] });
-    writeFileSync(mdPath, md);
+    writeFileSync(mdPath, md + feedSection() + "\n");
     writeFileSync(join(dir, "summary.json"), JSON.stringify({ recorder: rec.summary(), comparisons: compare(ticks, watcher.arbs) }, null, 1));
   };
-  watcher.start();
+  // ---- preflight: RPC, Geyser updates arriving, UDP shreds received and decoded ----
   infra.start();
+  const preSec = Number(process.env.PREFLIGHT_SECONDS ?? 30);
+  const rpcProbe = await probeRpc(conn, cfg);
+  if (preSec > 0) {
+    console.log(`preflight: listening ${preSec}s for Geyser updates and UDP shreds...`);
+    await sleep(preSec * 1000);
+  }
+  const pre = preflightLines(feedHealth(rpcProbe, infra.grpc, infra.shredsUdp), preSec);
+  for (const l of pre) console.log(`preflight: ${l}`);
+  console.log(`preflight: competitor collection ${rps} req/s via ${rpcI.isPublic ? "PUBLIC RPC" : `private host ${rpcI.host}`}; simulation and account reads via the same RPC`);
+  if (process.env.PREFLIGHT_ONLY === "1") { infra.close(); engine.close(); process.exit(0); }
+  watcher.start();
   let stopping = false;
   process.on("SIGINT", () => { stopping = true; });
   process.on("SIGTERM", () => { stopping = true; });
@@ -111,6 +141,7 @@ async function main() {
   infra.close();
   write(false);
   console.log(`shadow done: ${ticks.length} ticks, ${watcher.arbs.length} competitor arbs; report ${mdPath}`);
+  if (process.env.SHADOW_PRINT === "1") console.log("\n" + readFileSync(mdPath, "utf8"));
   process.exit(0);
 }
 

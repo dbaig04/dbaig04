@@ -155,6 +155,8 @@ export class ShredsUdpFeed {
   stats: ShredsUdpStats = { ...ZERO_STATS };
   invalidReasons: Partial<Record<ShredError, number>> = {};
   newestSlot = -1;
+  /** slot -> wall-clock ms of the first accepted shred of that slot (bounded; for freshness comparisons). */
+  readonly slotFirstShredAt = new Map<number, number>();
   bufferedBytes = 0;
   lastPacketAt = 0;
   status: "idle" | "listening" | "closed" | "error" = "idle";
@@ -281,6 +283,10 @@ export class ShredsUdpFeed {
     if (!this.admitSlot(s.slot)) return;
     const st = this.slotState(s.slot);
     this.stats.accepted++;
+    if (!this.slotFirstShredAt.has(s.slot)) {
+      this.slotFirstShredAt.set(s.slot, at);
+      if (this.slotFirstShredAt.size > 4_096) this.slotFirstShredAt.delete(this.slotFirstShredAt.keys().next().value!);
+    }
     if (s.type === "data") this.onDataShred(st, s, at);
     else this.onCodeShred(st, s, at);
     if (this.bufferedBytes > this.maxBytes) this.evictForMemory();

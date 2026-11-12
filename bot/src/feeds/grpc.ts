@@ -190,6 +190,12 @@ export class GrpcProvider implements StateProvider {
   reconnects = 0;
   /** Highest slot seen from the stream (slot or account updates). */
   streamSlot = -1;
+  /**
+   * Freshness telemetry (bounded): when each slot was first announced on the stream, and for every
+   * subscribed account update its slot lag behind the stream tip and the time since its slot was
+   * first announced. Counts of slot / account messages for health checks.
+   */
+  readonly freshness = new FreshnessStats();
   /** Bumped on every flush; refresh() feeds sources when it differs from consumedVersion. */
   version = 0;
   private consumedVersion = -1;
@@ -257,6 +263,8 @@ export class GrpcProvider implements StateProvider {
   healthy(): boolean {
     return this.status === "connected" && this.seeded && this.o.now() - this.lastMsgAt <= this.o.staleMs;
   }
+
+  get commitment(): GrpcCommitment { return this.o.commitment; }
 
   info() {
     return { status: this.status, seeded: this.seeded, healthy: this.healthy(), streamSlot: this.streamSlot, snapshotSlot: this.snapshotSlot, lastMsgAgeMs: this.o.now() - this.lastMsgAt, reconnects: this.reconnects, accounts: this.subscribed.size, rejectedStale: this.store.rejected };
@@ -376,6 +384,7 @@ export class GrpcProvider implements StateProvider {
     if (u.slot) {
       this.lastMsgAt = now;
       const s = Number(u.slot.slot);
+      this.freshness.onSlot(s, now);
       if (s > this.streamSlot) this.streamSlot = s;
       // A slot status at our commitment for >= the dirty slot means that slot's writes are all in.
       if (this.dirtySlot !== null && s >= this.dirtySlot) this.flush();
@@ -385,6 +394,7 @@ export class GrpcProvider implements StateProvider {
       this.lastMsgAt = now;
       const d = decodeAccountUpdate(u.account);
       if (!d || !this.subscribed.has(d.key)) return;
+      this.freshness.onAccount(d.key, d.slot, this.streamSlot, now);
       if (d.slot > this.streamSlot) this.streamSlot = d.slot;
       const applied = this.store.applyStream(d.key, d.slot, d.writeVersion, this.gen, d.info, now);
       if (!applied || this.quiet.has(d.key) || !this.seeded) return;
@@ -472,5 +482,36 @@ export class GrpcProvider implements StateProvider {
     this.lastIngestMs = ingest;
     this.lastSource = "grpc";
     return { slot, updated: true };
+  }
+}
+
+
+/** Bounded freshness telemetry for a Geyser stream (see GrpcProvider.freshness). */
+export class FreshnessStats {
+  slotMsgs = 0;
+  accountMsgs = 0;
+  firstAccountAt?: number;
+  lastAccountAt?: number;
+  /** slot -> wall-clock ms it was first announced by a slot message */
+  readonly slotFirstSeen = new Map<number, number>();
+  /** per account update: [receivedAt, slot, slotsBehindTip, msSinceSlotAnnounced | -1] */
+  readonly samples: [number, number, number, number][] = [];
+  readonly perAccount = new Map<string, number>();
+  constructor(private readonly maxSamples = 200_000, private readonly maxSlots = 4_096) {}
+  onSlot(slot: number, now: number) {
+    this.slotMsgs++;
+    if (!this.slotFirstSeen.has(slot)) {
+      this.slotFirstSeen.set(slot, now);
+      if (this.slotFirstSeen.size > this.maxSlots) this.slotFirstSeen.delete(this.slotFirstSeen.keys().next().value!);
+    }
+  }
+  onAccount(key: string, slot: number, tip: number, now: number) {
+    this.accountMsgs++;
+    this.firstAccountAt ??= now;
+    this.lastAccountAt = now;
+    this.perAccount.set(key, (this.perAccount.get(key) ?? 0) + 1);
+    if (this.samples.length >= this.maxSamples) return;
+    const seen = this.slotFirstSeen.get(slot);
+    this.samples.push([now, slot, tip >= 0 ? Math.max(0, tip - slot) : 0, seen !== undefined ? now - seen : -1]);
   }
 }
