@@ -11,11 +11,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PublicKey, type AddressLookupTableAccount } from "@solana/web3.js";
 import { loadConfig } from "../config.js";
-import { makeReadConnection } from "../feeds/index.js";
+import { makeReadConnection, setupInfra } from "../feeds/index.js";
 import { Ledger } from "../engine/ledger.js";
 import { PairEngine, type PairTickInfo } from "../engine/pair-engine.js";
 import { ShadowRecorder } from "../engine/shadow.js";
-import { MAX_PUMPSWAP_POOL, MAX_SIM_USER, maxPairSpec, selectedDlmmPools } from "../engine/pair-venues.js";
+import { MAX_PUMPSWAP_POOL, MAX_SIM_USER, maxPairSpec, maxShredWatch, selectedDlmmPools } from "../engine/pair-venues.js";
 import { CompetitorWatcher } from "./competitors.js";
 import { RateLimitedRpc } from "./rpc.js";
 import { compare, renderShadowMd, summarizeTicks, untakenOpportunities } from "./shadow-report.js";
@@ -49,8 +49,11 @@ async function main() {
   const user = cfg.keypair ? cfg.keypair.publicKey : new PublicKey(process.env.PAIR_SIM_USER ?? MAX_SIM_USER);
   const rec = new ShadowRecorder(join(dir, "ticks.jsonl"));
   const ticks: PairTickInfo[] = [];
+  // ERPC feeds when configured (GRPC_ENDPOINT, SHREDS_UDP_PORT / SHREDSTREAM_ENDPOINT): event-driven
+  // ticks on gRPC account updates and shred hints, RPC polling as fallback. Else plain polling.
+  const infra = setupInfra(cfg, conn, console.log, { onShredsUdpSummary: (x) => ledger.append("latency", x), pairWatch: [maxShredWatch()] });
   const engine = new PairEngine({
-    conn, cfg, ledger, user, pair: { ...spec, lookupTables },
+    conn, cfg, ledger, user, pair: { ...spec, lookupTables }, stateProvider: infra.stateProvider, pending: infra.pending,
     forceSimEveryMs: Number(process.env.SHADOW_FORCE_SIM_MS ?? 20_000),
     onTick: (i) => { rec.record(i); ticks.push(i); },
   });
@@ -61,25 +64,34 @@ async function main() {
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
   console.log(`shadow: MAX pair, routes ${spec.routes!.map((r) => r.name).join(", ")}, user ${user.toBase58()} (${cfg.keypair ? "keypair" : "read-only sim user"}), poll ${cfg.pollIntervalMs} ms, ${minutes} min -> ${dir}`);
-  const notes = [
-    "Measured here: everything in the tables. Not measured: landing (nothing is ever sent), gRPC/shred detection (not available in this sandbox).",
-    "Detection in this sandbox = public-RPC polling: getSlot + one getMultipleAccountsInfo per tick, every POLL_INTERVAL_MS. A competitor that back-runs a pool move in the same slot is invisible to a poller whose snapshots are several slots apart; the 'slots between consecutive snapshots' row bounds how often we can even observe pre-trade state.",
-  ];
+  const desc = infra.describe();
+  console.log(`shadow infra: ${Object.entries(desc).map(([k, v]) => `${k}=${v}`).join("  ")}`);
+  const notes = infra.eventDriven
+    ? [
+        `Measured on this host with ERPC feeds: ${Object.entries(desc).map(([k, v]) => `${k}=${v}`).join(", ")}. Detection = account update received (gRPC) or shred hint; ticks are event-driven. Not measured: landing (nothing is ever sent).`,
+        "Simulation and competitor collection still use RPC_URL (public RPC unless an ERPC RPC endpoint is configured); competitor coverage on busy pools may be incomplete when that RPC rate-limits.",
+      ]
+    : [
+        "Measured here: everything in the tables. Not measured: landing (nothing is ever sent), gRPC/shred detection (no ERPC feeds configured on this host).",
+        "Detection = public-RPC polling: getSlot + one getMultipleAccountsInfo per tick, every POLL_INTERVAL_MS. A competitor that back-runs a pool move in the same slot is invisible to a poller whose snapshots are several slots apart; the 'slots between consecutive snapshots' row bounds how often we can even observe pre-trade state.",
+      ];
   const write = (interim: boolean) => {
     const md = renderShadowMd({ title: "MAX shadow run (PumpSwap ⇄ Meteora DLMM)", startedAt, minutes: (Date.now() - t0) / 60_000, interim, summary: summarizeTicks(ticks), comparisons: compare(ticks, watcher.arbs), competitorTxsScanned: watcher.seen, notes: [...untakenLines(ticks, watcher.arbs), ...notes] });
     writeFileSync(mdPath, md);
     writeFileSync(join(dir, "summary.json"), JSON.stringify({ recorder: rec.summary(), comparisons: compare(ticks, watcher.arbs) }, null, 1));
   };
   watcher.start();
+  infra.start();
   let stopping = false;
   process.on("SIGINT", () => { stopping = true; });
   process.on("SIGTERM", () => { stopping = true; });
   let lastReport = Date.now();
   let backoff = 0;
+  let trigger = "start";
   while (!stopping && Date.now() - t0 < minutes * 60_000) {
     const ts = Date.now();
     try {
-      const r = await engine.tick("timeout");
+      const r = await engine.tick(trigger);
       if (r.status !== "stale" && r.status !== "no-opportunity") console.log(`[${r.slot}] ${r.status}${r.plan ? ` ${r.plan.pair} ${r.plan.direction} in ${r.plan.grossIn} exp ${r.plan.expectedProfit}` : ""}${r.sim ? ` sim ${r.sim.ok ? "ok" : r.sim.reason}` : ""}`);
       backoff = 0;
     } catch (e) {
@@ -87,12 +99,16 @@ async function main() {
       backoff = Math.min(15_000, backoff ? backoff * 2 : 1_000);
     }
     if (Date.now() - lastReport >= reportMs) { write(true); lastReport = Date.now(); }
-    await sleep(Math.max(0, cfg.pollIntervalMs - (Date.now() - ts)) + backoff);
+    const wait = Math.max(0, cfg.pollIntervalMs - (Date.now() - ts)) + backoff;
+    // event-driven with ERPC feeds: wake on the next account update / shred hint (or the poll interval)
+    if (infra.eventDriven && !backoff) trigger = await infra.wait(wait);
+    else { await sleep(wait); trigger = "timeout"; }
   }
   watcher.stop();
   // final pass: competitor txs that landed in the last seconds
   await watcher.poll();
   engine.close();
+  infra.close();
   write(false);
   console.log(`shadow done: ${ticks.length} ticks, ${watcher.arbs.length} competitor arbs; report ${mdPath}`);
   process.exit(0);

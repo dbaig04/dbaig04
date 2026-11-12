@@ -104,9 +104,18 @@ export function roundTrip(dir: PairDirection, v: PairVenues, x: bigint, p: Pick<
   };
 }
 
+/**
+ * Final conservative net profit of a plan: expected profit after all execution costs (base +
+ * priority + tip) minus the min-out pad (rebates not guaranteed at landing). This is the amount
+ * the on-chain min-out guarantees, so sizing, direction choice and route choice all rank on it.
+ */
+export function conservativeNet(plan: PairPlan): bigint {
+  return plan.expectedProfit - plan.minOutPad;
+}
+
 /** Clears the floor after the min-out pad, within the cap. */
 export function pairFeasible(plan: PairPlan | null, p: Pick<PairParams, "profitFloor" | "maxLamportsIn">): plan is PairPlan {
-  return !!plan && plan.grossIn <= p.maxLamportsIn && plan.expectedProfit - plan.minOutPad >= p.profitFloor;
+  return !!plan && plan.grossIn <= p.maxLamportsIn && conservativeNet(plan) >= p.profitFloor;
 }
 
 export interface PairSearchOptions {
@@ -148,7 +157,8 @@ export function searchPairDirection(dir: PairDirection, v: PairVenues, p: PairPa
   const hi = p.maxLamportsIn;
   if (hi < lo) { res.skipped = true; res.skipReason = "no balance / cap below min trade"; return res; }
   const t0 = performance.now();
-  const gross = (x: bigint): bigint | null => roundTrip(dir, v, x, p)?.grossProfit ?? null;
+  // sizing objective: the final conservative net (gross − execution fees − min-out pad), not gross
+  const objective = (x: bigint): bigint | null => { const r = roundTrip(dir, v, x, p); return r ? conservativeNet(r) : null; };
 
   // ---- stage 1a: marginal-return bound (one exact round trip) ----
   const probe = roundTrip(dir, v, lo, p);
@@ -173,7 +183,7 @@ export function searchPairDirection(dir: PairDirection, v: PairVenues, p: PairPa
   // ---- stage 1b: coarse grid of exact round trips; stage 2: refine the best brackets ----
   const stage: MaximizeOptions = { gridPoints: o.gridPoints ?? 24, refineTop: o.refineTop ?? 3 };
   let nScreen = 0;
-  const s = maximizeCandidates((x) => { nScreen++; return gross(x); }, lo, hi, { ...stage, refineTop: 0 });
+  const s = maximizeCandidates((x) => { nScreen++; return objective(x); }, lo, hi, { ...stage, refineTop: 0 });
   // (refineTop: 0 => only the grid is evaluated here)
   res.screenEvals += nScreen;
   const t1 = performance.now();
@@ -188,7 +198,7 @@ export function searchPairDirection(dir: PairDirection, v: PairVenues, p: PairPa
     if (x > hi) x = hi;
     if (memo.has(x)) return memo.get(x)!;
     nExact++;
-    const y = gross(x);
+    const y = objective(x);
     memo.set(x, y);
     return y;
   };
@@ -237,7 +247,7 @@ export function optimizePair(v: PairVenues, p: PairParams, slot = 0, o?: PairSea
     buyBsellA: searchPairDirection("buyBsellA", v, p, slot, o, pair),
   };
   const byDirection = { buyAsellB: details.buyAsellB.plan, buyBsellA: details.buyBsellA.plan };
-  const c = Object.values(byDirection).filter((x): x is PairPlan => x !== null).sort((a, b) => cmp(b.expectedProfit, a.expectedProfit));
+  const c = Object.values(byDirection).filter((x): x is PairPlan => x !== null).sort((a, b) => cmp(conservativeNet(b), conservativeNet(a)));
   return { best: c[0] ?? null, byDirection, details };
 }
 

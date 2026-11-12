@@ -5,6 +5,7 @@
 import type { Connection, PublicKey } from "@solana/web3.js";
 import type { Config } from "../config.js";
 import type { DlmmVenue, RiseVenue, StateSource } from "../types.js";
+import { RISE_MINT } from "../types.js";
 import { optimize, type OptimizeResult, type Plan } from "./optimizer.js";
 import { BlockhashCache } from "./blockhash.js";
 import type { ExecFeePolicy } from "./fees.js";
@@ -338,7 +339,10 @@ export class ArbEngine {
     const sender = this.sender!;
     const signature = signatureOf(b.tx);
     // exactly one tx in flight (throws if another is unresolved, on a halt, or on a duplicate)
-    this.risk.beginSubmission({ signature, messageHash: x.messageHash, oppKey: opportunityKey(plan), slot }, { lastValidBlockHeight, feeLamports: b.feeLamports, tipLamports: x.tipLamports, delivery: sender.name });
+    this.risk.beginSubmission({ signature, messageHash: x.messageHash, oppKey: opportunityKey(plan), slot }, {
+      lastValidBlockHeight, feeLamports: b.feeLamports, tipLamports: x.tipLamports, delivery: sender.name,
+      account: { pair: "rise", user: this.d.cfg.user.toBase58(), wsolAta: this.wsolAta.toBase58(), tokenAta: this.riseAta.toBase58(), tokenMint: RISE_MINT },
+    });
     this.inFlight = true;
     try {
       ledger.append("submission", { slot, signature, direction: plan.direction, sender: sender.name, cuLimit: b.cuLimit, cuPrice: b.cuPriceMicroLamports, fee: b.feeLamports, tip: x.tipLamports, messageHash: x.messageHash, leg1Limit: b.leg1Limit, finalMinOut: b.finalMinOut, lastValidBlockHeight });

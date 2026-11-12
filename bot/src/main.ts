@@ -5,9 +5,9 @@ import { Connection } from "@solana/web3.js";
 import { describeConfig, loadConfig, type Config } from "./config.js";
 import type { DlmmVenue, RiseVenue } from "./types.js";
 import { ArbEngine } from "./engine/engine.js";
-import { fetchRealized, Ledger, reconcileBalances, toJson } from "./engine/ledger.js";
+import { fetchRealized, Ledger, reconcileTokenBalances, toJson } from "./engine/ledger.js";
 import { JitoClient, JitoSender, RpcSender, type Sender, type TxPreparer } from "./engine/sender.js";
-import { DAILY_HALTS, ProgramUpgradeGuard, resolveOrphanInFlight, RiskGuard, WATCHED_PROGRAMS, watchedProgramsFor } from "./engine/risk.js";
+import { DAILY_HALTS, ProgramUpgradeGuard, resolveOrphanInFlight, RiskGuard, WATCHED_PROGRAMS, watchedProgramsFor, type InFlightRecord } from "./engine/risk.js";
 import { PairEngine } from "./engine/pair-engine.js";
 import { MAX_SIM_USER, maxPairSpec, maxShredWatch } from "./engine/pair-venues.js";
 import { PublicKey, type AddressLookupTableAccount } from "@solana/web3.js";
@@ -81,10 +81,32 @@ async function createPairEngines(cfg: Config, conn: Connection, d: { ledger: Led
   return out;
 }
 
-async function readAtaBalances(conn: Connection, engine: ArbEngine): Promise<{ wsol: bigint; rise: bigint } | null> {
-  const [w, r] = await conn.getMultipleAccountsInfo([engine.wsolAta, engine.riseAta], "confirmed");
-  if (!w || !r) return null;
-  return { wsol: decodeTokenAmount(w.data), rise: decodeTokenAmount(r.data) };
+/** Per user: its wSOL ATA and each pair's token ATA (RISE engine = "rise", pair engines by name). */
+type Holder = { user: string; wsolAta: PublicKey; tokens: { pair: string; ata: PublicKey }[] };
+function balanceHolders(engine: ArbEngine | null, pairEngines: { name: string; user: PublicKey; wsolAta: PublicKey; tokenAta: PublicKey }[], riseUser: PublicKey): Holder[] {
+  const m = new Map<string, Holder>();
+  const add = (user: PublicKey, wsolAta: PublicKey, pair: string, ata: PublicKey) => {
+    const k = user.toBase58();
+    const h = m.get(k) ?? { user: k, wsolAta, tokens: [] };
+    h.tokens.push({ pair, ata });
+    m.set(k, h);
+  };
+  if (engine) add(riseUser, engine.wsolAta, "rise", engine.riseAta);
+  for (const e of pairEngines) add(e.user, e.wsolAta, e.name, e.tokenAta);
+  return [...m.values()];
+}
+
+/** On-chain balances per user. A missing token account reads as 0 (e.g. MAX ATA not created yet); a missing wSOL ATA skips that user. */
+async function readHolderBalances(conn: Connection, holders: Holder[]): Promise<Map<string, { wsol: bigint; tokens: Record<string, bigint> }>> {
+  const out = new Map<string, { wsol: bigint; tokens: Record<string, bigint> }>();
+  for (const h of holders) {
+    const infos = await conn.getMultipleAccountsInfo([h.wsolAta, ...h.tokens.map((t) => t.ata)], "confirmed");
+    if (!infos[0]) continue;
+    const tokens: Record<string, bigint> = {};
+    h.tokens.forEach((t, i) => { const a = infos[i + 1]; tokens[t.pair] = a ? decodeTokenAmount(a.data) : 0n; });
+    out.set(h.user, { wsol: decodeTokenAmount(infos[0].data), tokens });
+  }
+  return out;
 }
 
 async function main() {
@@ -121,24 +143,36 @@ async function main() {
   for (const [k, v] of Object.entries(programs)) console.log(`program ${k}: ${v}`);
   upgrades.start();
 
-  // orphan realize: the RISE ATAs when the RISE engine runs, else the first pair engine's wSOL/token ATAs
+  // Orphan realize: the in-flight record names the pair, user and wSOL/token ATAs it traded through.
+  // Records written by older versions have no `account`: fall back to the RISE ATAs when the RISE
+  // engine runs, else the first pair engine's (and say so).
   const ataPair = engine ? { wsol: engine.wsolAta, tok: engine.riseAta, user: cfg.user } : { wsol: pairEngines[0].wsolAta, tok: pairEngines[0].tokenAta, user: pairEngines[0].user };
-  const realize = (sig: string) => fetchRealized(conn, sig, ataPair.user.toBase58(), ataPair.wsol.toBase58(), ataPair.tok.toBase58(), { kind: "other" });
+  const realize = (sig: string, rec: InFlightRecord) => {
+    const a = rec.account;
+    if (!a) console.log(`risk: orphan ${sig.slice(0, 16)}… has no account info (older record); realizing against ${ataPair.tok.toBase58()}`);
+    return fetchRealized(conn, sig, a?.user ?? ataPair.user.toBase58(), a?.wsolAta ?? ataPair.wsol.toBase58(), a?.tokenAta ?? ataPair.tok.toBase58(), { kind: "other" });
+  };
   const resolveOrphan = () => resolveOrphanInFlight({ risk, conn, ledger, realize, baseFeeLamports: cfg.baseFeeLamports, user: ataPair.user.toBase58(), log: console.log });
   // A tx left in flight by a previous run must be resolved before anything else is sent.
   await resolveOrphan();
 
-  // Startup reconcile: on-chain wSOL/RISE vs the ledger's running totals since the last snapshot.
-  const bal = engine ? await readAtaBalances(conn, engine).catch(() => null) : null;
-  if (bal) {
+  // Startup reconcile, per user: on-chain wSOL and every pair's token balance vs the ledger's running
+  // totals since that user's last snapshot (RISE and MAX token accounts reconciled separately).
+  const holders = balanceHolders(engine, pairEngines, cfg.user);
+  const startBal = await readHolderBalances(conn, holders).catch(() => null);
+  if (startBal) {
     const evs = Ledger.read(cfg.ledgerPath);
-    const rec = reconcileBalances(evs, cfg.user.toBase58(), bal);
-    if (rec) {
-      const drift = rec.drift.wsol !== 0n || rec.drift.rise !== 0n;
-      console.log(`reconcile: on-chain wSOL ${bal.wsol} RISE ${bal.rise}; ledger expects wSOL ${rec.expected.wsol} RISE ${rec.expected.rise} (${rec.outcomesSince} outcomes since ${rec.baselineTs})${drift ? ` DRIFT wSOL ${rec.drift.wsol} RISE ${rec.drift.rise}` : " - no drift"}`);
-      ledger.append("reconcile", { user: cfg.user.toBase58(), onchain: bal, ...rec });
-    } else console.log(`reconcile: no previous balances snapshot for ${cfg.user.toBase58()} in the ledger; baseline recorded`);
-    ledger.append("balances", { user: cfg.user.toBase58(), wsol: bal.wsol, rise: bal.rise, at: "start" });
+    for (const [user, bal] of startBal) {
+      const rec = reconcileTokenBalances(evs, user, bal);
+      const toks = Object.entries(bal.tokens).map(([k, v]) => `${k} ${v}`).join(" ");
+      if (rec) {
+        const tokDrift = Object.entries(rec.drift.tokens).filter(([, v]) => v !== 0n);
+        const drift = rec.drift.wsol !== 0n || tokDrift.length > 0;
+        console.log(`reconcile ${user.slice(0, 8)}…: on-chain wSOL ${bal.wsol} ${toks}; ledger expects wSOL ${rec.expected.wsol} ${Object.entries(rec.expected.tokens).map(([k, v]) => `${k} ${v}`).join(" ")} (${rec.outcomesSince} outcomes since ${rec.baselineTs})${drift ? ` DRIFT wSOL ${rec.drift.wsol}${tokDrift.map(([k, v]) => ` ${k} ${v}`).join("")}` : " - no drift"}${rec.noBaseline.length ? `; no baseline yet for ${rec.noBaseline.join(",")}` : ""}`);
+        ledger.append("reconcile", { user, onchain: bal, ...rec });
+      } else console.log(`reconcile ${user.slice(0, 8)}…: no previous balances snapshot in the ledger; baseline recorded`);
+      ledger.append("balances", { user, wsol: bal.wsol, tokens: bal.tokens, ...(bal.tokens.rise !== undefined ? { rise: bal.tokens.rise } : {}), at: "start" });
+    }
   }
 
   infra.start();
@@ -216,8 +250,8 @@ async function main() {
   upgrades.stop();
   for (const e of engines) e.close();
   infra.close();
-  const endBal = engine ? await readAtaBalances(conn, engine).catch(() => null) : null;
-  if (endBal) ledger.append("balances", { user: cfg.user.toBase58(), wsol: endBal.wsol, rise: endBal.rise, at: "stop" });
+  const endBal = await readHolderBalances(conn, holders).catch(() => null);
+  for (const [user, bal] of endBal ?? []) ledger.append("balances", { user, wsol: bal.wsol, tokens: bal.tokens, ...(bal.tokens.rise !== undefined ? { rise: bal.tokens.rise } : {}), at: "stop" });
   const sessionNetLamports = engines.reduce((a, e) => a + e.sessionNetLamports, 0n);
   ledger.append("stop", { sessionNetLamports, reason: stopReason, risk: risk.snapshot() });
   try { if (existsSync(cfg.risk.pidFile)) rmSync(cfg.risk.pidFile); } catch { /* ignore */ }

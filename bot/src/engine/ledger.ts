@@ -388,3 +388,43 @@ export function reconcileBalances(events: LedgerEvent[], user: string, onchain: 
   }
   return { baselineTs: b.ts, expected: { wsol, rise }, drift: { wsol: onchain.wsol - wsol, rise: onchain.rise - rise }, outcomesSince: n };
 }
+
+/**
+ * Multi-pair balance reconcile. A `balances` snapshot (type "balances", same user) records the
+ * wSOL balance and every pair's token balance (`tokens: { [pair]: amount }`; older snapshots with
+ * only `rise` are read as `tokens.rise`). Expected now = snapshot + Σ landed outcomes since it:
+ * wSOL from every pair (the wSOL account is shared), token deltas per pair (outcomes without a
+ * `pair` field are RISE engine outcomes). Pairs absent from the snapshot are reported but not
+ * reconciled (no baseline yet).
+ */
+export function reconcileTokenBalances(
+  events: LedgerEvent[],
+  user: string,
+  onchain: { wsol: bigint; tokens: Record<string, bigint> },
+): { baselineTs: string; expected: { wsol: bigint; tokens: Record<string, bigint> }; drift: { wsol: bigint; tokens: Record<string, bigint> }; noBaseline: string[]; outcomesSince: number } | null {
+  let bi = -1;
+  for (let i = events.length - 1; i >= 0; i--) if (events[i].type === "balances" && events[i].user === user) { bi = i; break; }
+  if (bi < 0) return null;
+  const b = events[bi];
+  const base: Record<string, bigint> = {};
+  const snapTokens = (b.tokens ?? {}) as Record<string, unknown>;
+  for (const [k, v] of Object.entries(snapTokens)) base[k] = big0(v);
+  if (b.rise !== undefined && base.rise === undefined) base.rise = big0(b.rise);
+  let wsol = big0(b.wsol), n = 0;
+  const exp: Record<string, bigint> = { ...base };
+  for (const e of events.slice(bi + 1)) {
+    if (e.type !== "outcome" || !e.landed) continue;
+    if (e.user !== undefined && e.user !== user) continue;
+    wsol += big0(e.wsolDelta);
+    const pair = typeof e.pair === "string" ? e.pair : "rise";
+    if (exp[pair] !== undefined) exp[pair] += big0(e.riseDelta);
+    n++;
+  }
+  const drift: Record<string, bigint> = {};
+  const noBaseline: string[] = [];
+  for (const [pair, amt] of Object.entries(onchain.tokens)) {
+    if (exp[pair] === undefined) { noBaseline.push(pair); continue; }
+    drift[pair] = amt - exp[pair];
+  }
+  return { baselineTs: b.ts, expected: { wsol, tokens: exp }, drift: { wsol: onchain.wsol - wsol, tokens: drift }, noBaseline, outcomesSince: n };
+}

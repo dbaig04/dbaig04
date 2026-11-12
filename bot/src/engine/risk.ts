@@ -57,6 +57,21 @@ export interface InFlightRecord {
   tipLamports: string;
   delivery: string;
   startedAt: string;
+  /**
+   * Which accounts this tx trades through (written at claim time), so an orphan left by a crash is
+   * realized against the right pair's wSOL / token accounts. Absent in records written by older
+   * versions (then the caller falls back to its default accounts).
+   */
+  account?: InFlightAccount;
+}
+
+export interface InFlightAccount {
+  /** "rise" or the pair name (e.g. "max"). */
+  pair: string;
+  user: string;
+  wsolAta: string;
+  tokenAta: string;
+  tokenMint?: string;
 }
 
 export interface RiskState {
@@ -319,7 +334,7 @@ export class RiskGuard {
    * active, or the submission is a duplicate. Persisted so a crash mid-flight is
    * resolved at the next startup before any new submission.
    */
-  beginSubmission(k: SubmissionKey, meta: { lastValidBlockHeight: number; feeLamports: bigint; tipLamports: bigint; delivery: string }): void {
+  beginSubmission(k: SubmissionKey, meta: { lastValidBlockHeight: number; feeLamports: bigint; tipLamports: bigint; delivery: string; account?: InFlightAccount }): void {
     if (this.inFlightKey || this.state.inFlight) throw new Error(`risk: a tx is already in flight (${(this.inFlightKey?.signature ?? this.state.inFlight?.signature ?? "").slice(0, 16)}…)`);
     const h = this.halt();
     if (h) throw new Error(`risk: halted (${h.reason}): ${h.detail}`);
@@ -330,6 +345,7 @@ export class RiskGuard {
       signature: k.signature, messageHash: k.messageHash, oppKey: k.oppKey, slot: k.slot,
       lastValidBlockHeight: meta.lastValidBlockHeight, feeLamports: meta.feeLamports.toString(), tipLamports: meta.tipLamports.toString(),
       delivery: meta.delivery, startedAt: new Date(this.now()).toISOString(),
+      ...(meta.account ? { account: meta.account } : {}),
     };
     this.state.recentSignatures = [...this.state.recentSignatures, k.signature].slice(-RECENT);
     this.state.recentMessages = [...this.state.recentMessages, k.messageHash].slice(-RECENT);
@@ -504,8 +520,10 @@ export async function resolveOrphanInFlight(d: {
   risk: RiskGuard;
   conn: StatusConnection;
   ledger: Ledger;
-  realize: (signature: string) => Promise<Realized>;
+  /** Realize the orphan; receives the in-flight record so it can use the record's own accounts. */
+  realize: (signature: string, rec: InFlightRecord) => Promise<Realized>;
   baseFeeLamports: bigint;
+  /** Fallback user for records without `account`. */
   user: string;
   log?: (m: string) => void;
   resolve?: typeof resolveSignature;
@@ -515,12 +533,13 @@ export async function resolveOrphanInFlight(d: {
   d.log?.(`risk: resolving unrecorded in-flight tx ${o.signature} (started ${o.startedAt}, lastValidBlockHeight ${o.lastValidBlockHeight})`);
   const res = await (d.resolve ?? resolveSignature)(d.conn, o.signature, o.lastValidBlockHeight, { log: d.log });
   let out: Realized;
-  try { out = res.status === "expired" ? droppedOutcome(o.signature, "other") : await d.realize(o.signature); } catch { out = droppedOutcome(o.signature, "other"); }
+  try { out = res.status === "expired" ? droppedOutcome(o.signature, "other") : await d.realize(o.signature, o); } catch { out = droppedOutcome(o.signature, "other"); }
   if (!out.landed && res.status !== "expired") out = unrealizedLandedOutcome(o.signature, "other", res.status, BigInt(o.feeLamports), BigInt(o.tipLamports));
   const rec = reconcileOutcome(out, { wsolDelta: out.wsolDelta, riseDelta: out.riseDelta, feeLamports: BigInt(o.feeLamports), baseFeeLamports: d.baseFeeLamports, tipLamports: BigInt(o.tipLamports) });
   d.risk.recordOutcome({ signature: o.signature, landed: out.landed, success: out.success, feeLamports: out.fee, tipLamports: rec.tipLamports, netLamports: out.netLamports });
   d.ledger.append("outcome", {
-    ...out, user: d.user, orphan: true, delivery: o.delivery, sendStatus: res.status,
+    ...out, user: o.account?.user ?? d.user, ...(o.account ? { pair: o.account.pair, tokenMint: o.account.tokenMint, tokenAta: o.account.tokenAta } : {}),
+    orphan: true, delivery: o.delivery, sendStatus: res.status,
     exec: { base: rec.baseFeeLamports, priority: rec.priorityFeeLamports, tip: rec.tipLamports, total: rec.execCostLamports },
     tradingProfit: rec.tradingProfitLamports, failedCost: rec.failedCostLamports, residualRise: rec.residualRise,
   });

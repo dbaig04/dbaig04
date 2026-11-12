@@ -20,7 +20,7 @@ import { simulateArb, type SimConnection, type SimResult } from "./simulate.js";
 import { GuardedSender, resolveSignature, signatureOf, SimRegistry, SubmitRefused, type Sender, type StatusConnection, type TxPreparer } from "./sender.js";
 import { droppedOutcome, fetchRealized, reconcileOutcome, unrealizedLandedOutcome, type Ledger, type Realized } from "./ledger.js";
 import { RiskGuard } from "./risk.js";
-import { optimizePair, type PairDirection, type PairOptimizeResult, type PairPlan, type PairSearchOptions } from "./pair-optimizer.js";
+import { conservativeNet, optimizePair, type PairDirection, type PairOptimizeResult, type PairPlan, type PairSearchOptions } from "./pair-optimizer.js";
 import { buildPairTx, pairOpportunityKey, pairPlanRecord, type PairBuiltTx } from "./pair.js";
 import type { PendingHint } from "./engine.js";
 
@@ -341,7 +341,8 @@ export class PairEngine {
       info.routes[route.name] = { quoteUs: Math.round((performance.now() - r0) * 1000), cached: rc, screenEvals: se, exactEvals: ee, best: bestOf(rr), feasible: !!rr.best };
       perRoute.push({ route, res: rr, cached: rc });
     }
-    const byProfit = (x: PairPlan | null, y: PairPlan | null) => (x && (!y || x.expectedProfit > y.expectedProfit) ? -1 : y && (!x || y.expectedProfit > x.expectedProfit) ? 1 : 0);
+    // rank routes on the final conservative net (after execution costs and the min-out pad)
+    const byProfit = (x: PairPlan | null, y: PairPlan | null) => (x && (!y || conservativeNet(x) > conservativeNet(y)) ? -1 : y && (!x || conservativeNet(y) > conservativeNet(x)) ? 1 : 0);
     const chosen = [...perRoute].sort((x, y) => byProfit(x.res.best, y.res.best))[0];
     const res = chosen.res;
     const cached = allCached;
@@ -486,7 +487,10 @@ export class PairEngine {
     const plan = b.plan;
     const sender = this.sender!;
     const signature = signatureOf(b.tx);
-    this.risk.beginSubmission({ signature, messageHash: x.messageHash, oppKey: x.oppKey, slot }, { lastValidBlockHeight, feeLamports: b.feeLamports, tipLamports: x.tipLamports, delivery: sender.name });
+    this.risk.beginSubmission({ signature, messageHash: x.messageHash, oppKey: x.oppKey, slot }, {
+      lastValidBlockHeight, feeLamports: b.feeLamports, tipLamports: x.tipLamports, delivery: sender.name,
+      account: { pair: this.name, user: this.user.toBase58(), wsolAta: this.wsolAta.toBase58(), tokenAta: this.tokenAta.toBase58(), tokenMint: this.d.pair.tokenMint.toBase58() },
+    });
     this.inFlight = true;
     try {
       ledger.append("submission", { pair: this.name, slot, signature, direction: plan.direction, sender: sender.name, cuLimit: b.cuLimit, cuPrice: b.cuPriceMicroLamports, fee: b.feeLamports, tip: x.tipLamports, messageHash: x.messageHash, leg1Limit: b.leg1Limit, finalMinOut: b.finalMinOut, lastValidBlockHeight });

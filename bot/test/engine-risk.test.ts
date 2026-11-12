@@ -293,3 +293,26 @@ test("audit: orphan that landed (status failed) but getTransaction unavailable i
     assert.equal(Ledger.read(ledger.path).at(-1)!.estimated, true);
   } finally { t.done(); }
 });
+
+test("MAX orphan: the in-flight record keeps the pair's accounts across a restart and is realized against them", async () => {
+  const t = tmp();
+  try {
+    const g = guard(t.limits);
+    const k = key();
+    const account = { pair: "max", user: "MaxUser1111", wsolAta: "MaxWsolAta111", tokenAta: "MaxTokenAta111", tokenMint: "5qaP7oKUqKffwwo5DaEqDoTtsBLMpdbQTxEkCDaTpump" };
+    g.beginSubmission(k, { ...meta, account });
+    const g2 = guard(t.limits); // simulated crash + restart: state reloaded from disk
+    assert.deepEqual(g2.orphanInFlight?.account, account);
+    const ledger = new Ledger(join(t.dir, "l.jsonl"));
+    let seen: unknown;
+    const realized: Realized = { signature: k.signature, landed: true, success: true, err: null, kind: "other", fee: 55_000n, wsolDelta: 300_000n, riseDelta: 12n, nativeDelta: -55_000n, netLamports: 245_000n };
+    const resolve = async (_c: unknown, sig: string): Promise<SendResult> => ({ signature: sig, status: "confirmed", slot: 5, broadcasts: 0 });
+    await resolveOrphanInFlight({ risk: g2, conn: {} as never, ledger, realize: async (_s, rec) => { seen = rec.account; return realized; }, baseFeeLamports: 5_000n, user: "RiseUser", resolve: resolve as never, log: () => {} });
+    assert.deepEqual(seen, account, "realize gets the record's own accounts");
+    const row = Ledger.read(ledger.path).at(-1)!;
+    assert.equal(row.user, "MaxUser1111", "booked to the MAX pair's user, not the RISE fallback");
+    assert.equal(row.pair, "max");
+    assert.equal(row.tokenAta, "MaxTokenAta111");
+    assert.equal(row.residualRise, "12", "token residue measured on the MAX token account");
+  } finally { t.done(); }
+});
