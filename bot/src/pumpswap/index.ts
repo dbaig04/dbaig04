@@ -14,6 +14,7 @@ import {
   FEE_CONFIG,
   GLOBAL_CONFIG,
   PUMP_AMM_PROGRAM,
+  PUMP_FEE_PROGRAM,
   SYSTEM_PROGRAM,
   TOKEN_2022_PROGRAM,
   TOKEN_PROGRAM,
@@ -306,8 +307,12 @@ export class PumpSwapPool implements SwapVenue {
     return [this.swapIx(user, side, amountIn, minOut)];
   }
 
+  /**
+   * Programs whose upgrade must halt trading here: pump_amm, the pump-fees program that owns the
+   * FeeConfig every trade reads (fee tiers), and both token programs a v2 trade CPIs into.
+   */
   programIds(): PublicKey[] {
-    return [PUMP_AMM_PROGRAM];
+    return [PUMP_AMM_PROGRAM, PUMP_FEE_PROGRAM, TOKEN_PROGRAM, TOKEN_2022_PROGRAM];
   }
 }
 

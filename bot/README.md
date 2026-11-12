@@ -111,7 +111,10 @@ another in the same loop and share one `RiskGuard`, so there is still exactly on
   (`MAX_DLMM_POOLS=5nwdWt,6PkALv,H6Bcgd`, default all three; see `src/pumpswap/pools.ts`). The PumpSwap state is
   fetched once per tick and shared; every route is optimized each tick and the single best plan across routes is taken.
 - **Round trip**: exact-in buy (lamports → MAX), then exact-in sell of exactly the received MAX. Leg-1 min-out = quoted
-  MAX; final min-out = net lamports in + at-risk DLMM SOL rebate + base + priority + tip + floor (on-chain floor).
+  MAX; final min-out = net lamports in + at-risk DLMM SOL rebates + base + priority + tip + floor (on-chain floor).
+  At-risk rebates: leg 1's SOL host-fee rebate if the fee rate falls; on OnlyY pools (H6Bcgd) leg 2's host fee is paid
+  into the wSOL output and the program min-out is lowered by the quoted rebate, so the part of it not guaranteed when
+  the pool pays only that program min-out (rebate scales with the gross output) is padded too (audit fix).
 - **Sizing** (`src/engine/pair-optimizer.ts`): one exact round trip at the min size bounds the profit (both venues are
   concave), skipping the direction when even the bound misses the floor; otherwise a coarse grid of exact µs quotes,
   then golden-section / pattern / integer-window refinement. Tested against dense brute force (synthetic + recorded
@@ -122,7 +125,8 @@ another in the same loop and share one `RiskGuard`, so there is still exactly on
 - **Simulate mode** simulates as `PAIR_SIM_USER` (default `8pY1Au…`, which holds wSOL + MAX ATAs). `PAIR_FORCE_SIM_MS`
   adds sub-floor latency-probe simulations (simulate mode only, never sendable). `PAIR_LOOKUP_TABLES` for v0 txs if a
   route's legacy message ever exceeds 1,232 B (measured 1,079 B).
-- Upgrade guard also watches every upgradeable program of the pair venues; shred feeds flag txs touching ≥ 2 MAX pools
+- Upgrade guard also watches every upgradeable program of the pair venues (PumpSwap, pump fees = FeeConfig owner,
+  DLMM, SPL Token, Token-2022; Memo is immutable); shred feeds flag txs touching ≥ 2 MAX pools
   (`shred:max:arb` wakes the loop, requote + hint latency marker).
 - Research / shadow tools: `src/research/` (`COMPETITOR.md`, `SHADOW.md`, `shadow-run.ts`, `report.ts`).
 

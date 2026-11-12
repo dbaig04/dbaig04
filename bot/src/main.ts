@@ -50,6 +50,14 @@ function makeDelivery(cfg: Config, conn: Connection, sendConn: Connection | unde
   return { sender, describe: sendConn ? "rpc via SEND_RPC_URL" : "rpc via RPC_URL" };
 }
 
+const PROGRAM_LABELS: Record<string, string> = {
+  pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA: "PumpSwap", pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ: "pump fees",
+  TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: "SPL Token", TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb: "Token-2022",
+  LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo: "Meteora DLMM", MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr: "Memo",
+};
+/** Unique, readable name per program (the upgrade guard keys its log/baseline output by name). */
+const programLabel = (id: string) => PROGRAM_LABELS[id] ?? id;
+
 /** Generic pair engines enabled by PAIRS (RISE is the ArbEngine above). */
 async function createPairEngines(cfg: Config, conn: Connection, d: { ledger: Ledger; risk: RiskGuard; sender?: Sender; preparer?: TxPreparer; infra: ReturnType<typeof setupInfra> }): Promise<PairEngine[]> {
   const out: PairEngine[] = [];
@@ -106,7 +114,7 @@ async function main() {
   // Program-upgrade guard: programdata deploy slot (45-byte dataSlice) every UPGRADE_CHECK_MS of RISE +
   // Meteora DLMM (RISE engine) and every upgradeable program a pair venue uses (PumpSwap, DLMM).
   const base = withRise ? WATCHED_PROGRAMS : [];
-  const extra = await watchedProgramsFor(conn, pairEngines.flatMap((e) => e.allVenues()).flatMap((v) => v.programIds().map((p) => ({ name: v.name.split(":")[0], programId: p.toBase58() }))), base);
+  const extra = await watchedProgramsFor(conn, pairEngines.flatMap((e) => e.allVenues()).flatMap((v) => v.programIds().map((p) => ({ name: programLabel(p.toBase58()), programId: p.toBase58() }))), base);
   for (const x of extra.immutable) console.log(`program ${x}: not upgradeable, not watched`);
   const upgrades = new ProgramUpgradeGuard(conn, risk, [...base, ...extra.watch], { intervalMs: cfg.risk.upgradeCheckMs, log: console.log });
   const programs = await upgrades.init();
@@ -159,11 +167,20 @@ async function main() {
       if (risk.orphanInFlight) await resolveOrphan();
       // serialized: the next tick starts only after this one (including any in-flight tx) is done;
       // engines tick one after another, so there is never more than one tx in flight overall
+      // Each engine is isolated: an RPC error in one pair's tick must not skip the others.
+      let failed = 0;
       for (const e of engines) {
         if (stopping || risk.halt()) break;
-        await e.tick(trigger);
+        try {
+          await e.tick(trigger);
+        } catch (err) {
+          failed++;
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`tick error: ${msg}`);
+          ledger.append("error", { message: msg });
+        }
       }
-      backoff = 0;
+      backoff = failed ? Math.min(30_000, backoff ? backoff * 2 : 1000) : 0;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`tick error: ${msg}`);

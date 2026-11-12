@@ -154,7 +154,8 @@ test("adapter side mapping (token as X or Y) and mint checks", () => {
   const d = new MeteoraDlmm();
   assert.ok(d.pool.equals(RISE_POOL));
   assert.equal(d.accounts().length, 4); // lb_pair, clock, RISE mint, wSOL mint (bin arrays after first update)
-  assert.equal(vx.programIds().length, 1);
+  // upgrade guard: DLMM + the token / memo programs swap2 CPIs into (audit: token programs were unwatched)
+  assert.deepEqual(vx.programIds().map((p) => p.toBase58()), ["LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"]);
   assert.ok(vx.name.startsWith("dlmm:Gt5ws"));
 });
 

@@ -59,7 +59,7 @@ export interface PairPlan {
   /** grossProfit − fees.totalLamports. */
   expectedProfit: bigint;
   txCostLamports: bigint;
-  /** Added to the final min-out: the leg-1 SOL rebate (not guaranteed at landing). */
+  /** Added to the final min-out: the parts of the leg-1 / leg-2 SOL rebates not guaranteed at landing. */
   minOutPad: bigint;
   /** Tokens left in the token account (leg-2 rebate in tokens). Not counted as profit. */
   tokenResidual: bigint;
@@ -72,10 +72,14 @@ export function venuesFor(dir: PairDirection, v: PairVenues): { buy: SwapVenue; 
 }
 
 /**
- * Optional venue hook: the part of a buy quote's SOL rebate (amountIn − netIn) that is NOT
- * guaranteed at landing. Default (hook absent): the whole rebate is treated as at risk.
+ * Optional venue hook: the part of a quote's SOL rebate that is NOT guaranteed at landing.
+ *   buy  (leg 1): the rebate amountIn − netIn. Default (hook absent): the whole rebate is at risk.
+ *   sell (leg 2): a SOL rebate folded into `out` that the venue's on-chain min-out does not cover
+ *                 (e.g. DLMM OnlyY host fee paid to the output account); `minOutLowerBound` is a
+ *                 lower bound of the final min-out the caller will pass (leg 1's netIn for floor ≥ 0).
+ *                 Default (hook absent): 0 (the venue's min-out covers all of `out`).
  */
-type RebateAware = { rebateAtRisk?(side: "buy" | "sell", amountIn: bigint, q: SwapQuote): bigint };
+type RebateAware = { rebateAtRisk?(side: "buy" | "sell", amountIn: bigint, q: SwapQuote, minOutLowerBound?: bigint): bigint };
 
 /** Exact round trip at x lamports gross in. null = a venue rejects the trade. */
 export function roundTrip(dir: PairDirection, v: PairVenues, x: bigint, p: Pick<PairParams, "fees">, slot = 0, pair = ""): PairPlan | null {
@@ -89,7 +93,9 @@ export function roundTrip(dir: PairDirection, v: PairVenues, x: bigint, p: Pick<
   const fees = chooseExecutionFees(gross, p.fees);
   const rebate = x - q1.netIn;
   const hook = (buy as SwapVenue & RebateAware).rebateAtRisk;
-  const pad = rebate <= 0n ? 0n : hook ? hook.call(buy, "buy", x, q1) : rebate;
+  const sellHook = (sell as SwapVenue & RebateAware).rebateAtRisk;
+  // leg 1: SOL rebate not guaranteed at landing; leg 2: SOL rebate in `out` the on-chain min-out does not cover
+  const pad = (rebate <= 0n ? 0n : hook ? hook.call(buy, "buy", x, q1) : rebate) + (sellHook ? sellHook.call(sell, "sell", q1.out, q2, q1.netIn) : 0n);
   return {
     pair, direction: dir, slot, buyVenue: buy.name, sellVenue: sell.name,
     grossIn: x, lamportsIn: q1.netIn, token: q1.out, lamportsOut: q2.out,

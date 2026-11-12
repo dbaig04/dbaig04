@@ -1,7 +1,7 @@
 // Realized-PnL report.
 //   npx tsx src/engine/report.ts [--ledger data/ledger.jsonl] [--days N]
 //     sections (per UTC day and all-time): trading profit, execution costs
-//     (base/priority/tip), failed-attempt costs, net, RISE residue (separate),
+//     (base/priority/tip), failed-attempt costs, net, token residue (separate),
 //     reconciliation drift, latency, halts, risk rejections
 //   npx tsx src/engine/report.ts --reference <dir-of-saved-getTransaction-json> [--wallet <pubkey>]
 // The reference mode recomputes the reference wallet's realized PnL from its
@@ -67,7 +67,7 @@ export function reportSections(evs: LedgerEvent[], title: string): string {
   L.push(`[costs]    execution costs: ${SOL(b.execCostLamports)} SOL = base ${SOL(b.baseFeeLamports)} + priority ${SOL(b.priorityFeeLamports)} + tip ${SOL(b.tipLamports)}`);
   L.push(`[failed]   failed-attempt costs (landed failures; dropped/expired cost 0): ${SOL(b.failedCostLamports)} SOL over ${b.failedLanded} txs (${b.dropped} dropped at 0)`);
   L.push(`[net]      realized SOL net (trading − execution costs): ${SOL(b.netLamports)} SOL`);
-  L.push(`[residual] RISE residue (not in realized SOL): ${b.residualRise} raw units, est. ${SOL(b.residualRiseValueEstLamports)} SOL at trade-time marks`);
+  L.push(`[residual] token residue (not in realized SOL): ${b.residualRise} raw units, est. ${SOL(b.residualRiseValueEstLamports)} SOL at trade-time marks`);
   L.push(`[reconcile] ${b.driftTxs} ok txs reconciled vs final sim; Σ|drift| wSOL ${b.absDrift.wsol}, RISE ${b.absDrift.rise}, native ${b.absDrift.native}`);
   const lat: Record<string, number[]> = Object.fromEntries(STAGES.map((k) => [k, []]));
   const slots: number[] = [];

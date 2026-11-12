@@ -57,7 +57,7 @@ test("report prints the separate sections per UTC day and all-time", () => {
   assert.match(parts[0], /\[risk\]     1 rejections/);
   assert.match(parts[1], /\[costs\]    execution costs: 0\.000045000 SOL = base 0\.000005000 \+ priority 0\.000020000 \+ tip 0\.000020000/);
   assert.match(parts[2], /\[net\]      realized SOL net .*: 0\.000745000 SOL/);
-  assert.match(parts[2], /\[residual\] RISE residue \(not in realized SOL\): 7 raw units/);
+  assert.match(parts[2], /\[residual\] token residue \(not in realized SOL\): 7 raw units/);
   assert.match(parts[2], /\[latency\] .*landed 900\/900\/900; slots to land p50 2/);
   assert.match(parts[2], /jito: n=2 landed 1 \(50%\)/);
   assert.match(reportSections([], "empty"), /0 submitted/);

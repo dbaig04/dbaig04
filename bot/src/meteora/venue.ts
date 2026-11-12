@@ -9,7 +9,7 @@ import { AccountInfo, PublicKey, TransactionInstruction } from "@solana/web3.js"
 import type { SwapQuote, SwapSide, SwapVenue } from "../types.js";
 import { WSOL_MINT } from "../types.js";
 import { ExactInQuote, MeteoraDlmm, MeteoraDlmmOptions, Side } from "./index.js";
-import { PROGRAM } from "./pda.js";
+import { MEMO_PROGRAM, PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM } from "./pda.js";
 
 const WSOL = new PublicKey(WSOL_MINT);
 
@@ -84,8 +84,9 @@ export class DlmmSwapVenue implements SwapVenue {
     return [this.dlmm.swapExactInIx(user, s, amountIn, programMin, c.q.binArrays)];
   }
 
+  /** Programs whose upgrade must halt trading here: DLMM and the token / memo programs swap2 CPIs into. */
   programIds(): PublicKey[] {
-    return [PROGRAM];
+    return [PROGRAM, TOKEN_PROGRAM, TOKEN_2022_PROGRAM, MEMO_PROGRAM];
   }
 }
 

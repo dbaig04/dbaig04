@@ -377,3 +377,8 @@ test("pool selection by config (MAX_DLMM_POOLS / MAX_DLMM_POOL / MAX_PUMPSWAP_PO
   assert.equal(v.dlmm.length, 2);
   assert.equal(v.pumpswap.name, `pumpswap:${POOL}`);
 });
+
+test("programIds (upgrade guard): pump_amm, the pump-fees FeeConfig owner and both token programs (audit regression)", () => {
+  const ids = venue().programIds().map((p) => p.toBase58());
+  assert.deepEqual(ids, ["pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA", "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]);
+});
