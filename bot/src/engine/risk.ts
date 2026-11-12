@@ -395,6 +395,26 @@ export const WATCHED_PROGRAMS: WatchedProgram[] = [
 
 export type ProgramDataConnection = Pick<Connection, "getMultipleAccountsInfo">;
 
+/**
+ * Upgrade-guard entries for extra programs (e.g. the pair venues' programIds(): PumpSwap). Only
+ * programs owned by the upgradeable loader have programdata to watch; others (native / immutable
+ * loaders) are returned in `immutable`. Programs already in `existing` are skipped.
+ */
+export async function watchedProgramsFor(conn: ProgramDataConnection, programs: { name: string; programId: string }[], existing: WatchedProgram[] = []): Promise<{ watch: WatchedProgram[]; immutable: string[] }> {
+  const seen = new Set(existing.map((p) => p.programId));
+  const todo = programs.filter((p, i) => !seen.has(p.programId) && programs.findIndex((q) => q.programId === p.programId) === i);
+  if (!todo.length) return { watch: [], immutable: [] };
+  const infos = await conn.getMultipleAccountsInfo(todo.map((p) => new PublicKey(p.programId)), { commitment: "confirmed", dataSlice: { offset: 0, length: 0 } });
+  const watch: WatchedProgram[] = [];
+  const immutable: string[] = [];
+  todo.forEach((p, i) => {
+    const info = infos[i];
+    if (info && info.owner.equals(BPF_UPGRADEABLE_LOADER)) watch.push({ name: p.name, programId: p.programId, programData: programDataAddress(p.programId) });
+    else immutable.push(`${p.name} (${p.programId}): ${info ? `owner ${info.owner.toBase58()}` : "missing"}`);
+  });
+  return { watch, immutable };
+}
+
 export function parseProgramDataHeader(info: AccountInfo<Buffer> | null): { deploySlot: bigint; authority: string | null } | null {
   if (!info || info.data.length < 13 || info.data.readUInt32LE(0) !== 3) return null;
   const hasAuth = info.data[12] === 1 && info.data.length >= PROGRAMDATA_HEADER;

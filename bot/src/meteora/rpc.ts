@@ -65,3 +65,60 @@ export async function getMultipleAccounts(keys: PublicKey[], url = DEFAULT_RPC):
   }
   return { slot, infos };
 }
+
+// ---- simulation helpers (validate scripts only) ----
+import { TransactionInstruction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+
+export interface SimResult {
+  slot: number;
+  err: unknown;
+  logs: string[];
+  unitsConsumed?: number;
+  /** post-state of the requested addresses (null if the account does not exist after the sim) */
+  accounts: (Buffer | null)[];
+  innerInstructions?: any[];
+}
+
+/** simulateTransaction (sigVerify:false, replaceRecentBlockhash:true) of a v0 tx paid by `payer`. */
+export async function simulateIxs(payer: PublicKey, ixs: TransactionInstruction[], addresses: PublicKey[], url = DEFAULT_RPC): Promise<SimResult> {
+  const msg = new TransactionMessage({ payerKey: payer, recentBlockhash: PublicKey.default.toBase58(), instructions: ixs }).compileToV0Message();
+  const tx = new VersionedTransaction(msg);
+  const r: any = await rpc(
+    "simulateTransaction",
+    [
+      Buffer.from(tx.serialize()).toString("base64"),
+      {
+        encoding: "base64",
+        sigVerify: false,
+        replaceRecentBlockhash: true,
+        commitment: "confirmed",
+        innerInstructions: true,
+        accounts: { encoding: "base64", addresses: addresses.map((k) => k.toBase58()) },
+      },
+    ],
+    url,
+  );
+  const v = r.value;
+  return {
+    slot: r.context.slot,
+    err: v.err,
+    logs: v.logs ?? [],
+    unitsConsumed: v.unitsConsumed,
+    accounts: (v.accounts ?? []).map((a: any) => (a ? Buffer.from(a.data[0], "base64") : null)),
+    innerInstructions: v.innerInstructions,
+  };
+}
+
+/** Snapshot venue accounts (+extra) with a second pass when the venue's account set grew. */
+export async function snapshotFor(src: { accounts(): PublicKey[]; update(slot: number, infos: Map<string, AccountInfo<Buffer> | null>): void }[], extra: PublicKey[], url = DEFAULT_RPC): Promise<Snapshot> {
+  const keysOf = () => [...new Map([...src.flatMap((s) => s.accounts()), ...extra].map((k) => [k.toBase58(), k])).values()];
+  let keys = keysOf();
+  let s = await getMultipleAccounts(keys, url);
+  for (let pass = 0; pass < 3; pass++) {
+    for (const v of src) v.update(s.slot, s.infos);
+    const want = keysOf();
+    if (!want.some((k) => !s.infos.has(k.toBase58()))) break;
+    s = await getMultipleAccounts(want, url);
+  }
+  return s;
+}

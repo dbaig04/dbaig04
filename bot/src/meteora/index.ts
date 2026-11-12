@@ -1,5 +1,8 @@
-// Meteora DLMM venue for the RISE/SOL pool (4xjgBH...). Pure, synchronous quoting over cached
-// account snapshots (no I/O). See NOTES.md for the fee model and validation evidence.
+// Meteora DLMM venue. Defaults to the RISE/SOL pool (4xjgBH...); any lb_pair can be passed via
+// options (e.g. MAX/SOL 5nwdWt...). Pure, synchronous quoting over cached account snapshots (no I/O).
+// Side naming is historical: "sellRise" = swap X -> Y (swap_for_y), "buyRise" = swap Y -> X, where X/Y
+// are the pool's token_x/token_y mints (for the RISE and MAX pools X = the token, Y = wSOL).
+// See NOTES.md for the fee model and validation evidence; venue.ts adapts this to SwapVenue.
 import { AccountInfo, PublicKey, TransactionInstruction } from "@solana/web3.js";
 import type { DlmmVenue } from "../types.js";
 import { RISE_MINT, WSOL_MINT } from "../types.js";
@@ -40,6 +43,7 @@ import {
   binIdToBinArrayIndex,
 } from "./pda.js";
 
+/** "sellRise" = X -> Y (swap_for_y), "buyRise" = Y -> X. */
 export type Side = "sellRise" | "buyRise";
 
 export interface QuoteDetail {
@@ -70,6 +74,12 @@ export interface ExactOutQuote extends QuoteDetail {
 }
 
 export interface MeteoraDlmmOptions {
+  /** lb_pair address. Default: the RISE/SOL pool 4xjgBH... */
+  pool?: PublicKey | string;
+  /** Expected token_x / token_y mints (checked on every lb_pair decode). Default for the RISE pool:
+   *  RISE / wSOL; for other pools: learned from the lb_pair (unchecked unless given). */
+  mintX?: PublicKey | string;
+  mintY?: PublicKey | string;
   /** Fetch initialized bin arrays within +-N array indices of the active array (default 12 = 840 bins). */
   binArrayWindow?: number;
   /** Extra bin arrays (beyond the ones the quote traverses) appended in swap direction (default 1). */
@@ -91,9 +101,19 @@ const SWAP_EXACT_OUT2_DISC = Buffer.from("2bd7f784893cf351", "hex");
 const RISE = new PublicKey(RISE_MINT);
 const WSOL = new PublicKey(WSOL_MINT);
 
+type DlmmOpts = Required<Pick<MeteoraDlmmOptions, "binArrayWindow" | "extraBinArrays" | "hostFeeRebate">>;
+
 export class MeteoraDlmm implements DlmmVenue {
-  readonly pool = POOL;
-  readonly opts: Required<MeteoraDlmmOptions>;
+  readonly pool: PublicKey;
+  readonly opts: DlmmOpts;
+  /** token_x / token_y mints (known up front if given/default, else after the first update). */
+  mintXKey: PublicKey | null;
+  mintYKey: PublicKey | null;
+  private readonly checkMints: boolean;
+  /** Token program per side, from the mint account owner (falls back to the lb_pair program flags
+   *  when the mint account is not in the snapshot); cross-checked against the flags. */
+  tokenProgramX: PublicKey | null = null;
+  tokenProgramY: PublicKey | null = null;
   slot = 0;
   lbPair: LbPairState | null = null;
   clock: ClockState | null = null;
@@ -108,41 +128,72 @@ export class MeteoraDlmm implements DlmmVenue {
   private lbRaw: Buffer | null = null;
   private lbDecoded: LbPairState | null = null;
   private mintRaw: Buffer | null = null;
-  /** Bumped whenever lb_pair, the RISE mint, a cached bin array or the cached set changes (or applySwap). */
+  private mintYRaw: Buffer | null = null;
+  /** Bumped whenever lb_pair, a mint, a cached bin array or the cached set changes (or applySwap). */
   stateVersion = 0;
   /** Per-user ATA cache for instruction building (PDA derivation is ~0.1-0.5 ms each). */
-  private ataCache = new Map<string, { rise: PublicKey; wsol: PublicKey }>();
+  private ataCache = new Map<string, { x: PublicKey; y: PublicKey }>();
 
   constructor(opts: MeteoraDlmmOptions = {}) {
-    this.opts = { binArrayWindow: 12, extraBinArrays: 1, hostFeeRebate: true, ...opts };
+    this.opts = { binArrayWindow: opts.binArrayWindow ?? 12, extraBinArrays: opts.extraBinArrays ?? 1, hostFeeRebate: opts.hostFeeRebate ?? true };
+    this.pool = opts.pool ? new PublicKey(opts.pool) : POOL;
+    const isRise = this.pool.equals(POOL);
+    this.mintXKey = opts.mintX ? new PublicKey(opts.mintX) : isRise ? RISE : null;
+    this.mintYKey = opts.mintY ? new PublicKey(opts.mintY) : isRise ? WSOL : null;
+    this.checkMints = !!(this.mintXKey || this.mintYKey);
   }
 
   // ---------------- StateSource ----------------
 
   accounts(): PublicKey[] {
-    return [POOL, SYSVAR_CLOCK, RISE, ...this.wanted];
+    const k = [this.pool, SYSVAR_CLOCK];
+    if (this.mintXKey) k.push(this.mintXKey);
+    if (this.mintYKey) k.push(this.mintYKey);
+    return k.concat(this.wanted);
   }
 
   update(slot: number, infos: Map<string, AccountInfo<Buffer> | null>): void {
-    const p = infos.get(POOL.toBase58());
+    const p = infos.get(this.pool.toBase58());
     if (!p) throw new Error("DLMM lb_pair missing from snapshot");
     const rawChanged = !this.lbRaw || !this.lbRaw.equals(p.data) || !this.lbDecoded;
     const lb = rawChanged ? decodeLbPair(p.data) : this.lbDecoded!;
-    if (!lb.tokenXMint.equals(RISE) || !lb.tokenYMint.equals(WSOL)) throw new Error("unexpected pool mints");
-    if (rawChanged) { this.lbRaw = Buffer.from(p.data); this.lbDecoded = lb; }
+    if (rawChanged) {
+      if (this.checkMints && ((this.mintXKey && !lb.tokenXMint.equals(this.mintXKey)) || (this.mintYKey && !lb.tokenYMint.equals(this.mintYKey))))
+        throw new Error(`unexpected pool mints ${lb.tokenXMint.toBase58()}/${lb.tokenYMint.toBase58()}`);
+      this.mintXKey = lb.tokenXMint;
+      this.mintYKey = lb.tokenYMint;
+      this.lbRaw = Buffer.from(p.data);
+      this.lbDecoded = lb;
+    }
     // also "changed" when the cached lbPair was advanced by applySwap
     let changed = rawChanged || this.lbPair !== lb;
     this.lbPair = lb;
     this.slot = slot;
     const c = infos.get(SYSVAR_CLOCK.toBase58());
     if (c) this.clock = decodeClock(c.data);
-    const m = infos.get(RISE.toBase58());
+    const flagProg = (f: number) => (f === 0 ? TOKEN_PROGRAM : TOKEN_2022_PROGRAM);
+    const progOf = (a: AccountInfo<Buffer> | null | undefined, flag: number, which: string): PublicKey => {
+      if (!a || a.owner.equals(PublicKey.default)) return flagProg(flag); // not in snapshot / owner unknown
+      const own = a.owner.equals(TOKEN_PROGRAM) ? TOKEN_PROGRAM : a.owner.equals(TOKEN_2022_PROGRAM) ? TOKEN_2022_PROGRAM : null;
+      if (!own) throw new Error(`mint ${which} owned by unexpected program ${a.owner.toBase58()}`);
+      if (!own.equals(flagProg(flag))) throw new Error(`mint ${which} owner disagrees with lb_pair token program flag`);
+      return own;
+    };
+    const m = infos.get(lb.tokenXMint.toBase58());
     if (m && (!this.mintRaw || !this.mintRaw.equals(m.data))) {
       this.mintX = decodeMint(m.data);
       this.mintRaw = Buffer.from(m.data);
       changed = true;
     }
-    this.mintY = null; // wSOL: classic SPL token, no extensions
+    const my = infos.get(lb.tokenYMint.toBase58());
+    if (my && (!this.mintYRaw || !this.mintYRaw.equals(my.data))) {
+      // a classic SPL mint (e.g. wSOL) decodes with no extensions
+      this.mintY = decodeMint(my.data);
+      this.mintYRaw = Buffer.from(my.data);
+      changed = true;
+    }
+    this.tokenProgramX = progOf(m, lb.tokenMintXProgramFlag, "X");
+    this.tokenProgramY = progOf(my, lb.tokenMintYProgramFlag, "Y");
 
     // initialized bin arrays from the internal bitmap (bit i <-> index i-512)
     const idx: number[] = [];
@@ -154,11 +205,11 @@ export class MeteoraDlmm implements DlmmVenue {
     const activeIdx = binIdToBinArrayIndex(lb.activeId);
     const win = this.opts.binArrayWindow;
     const wantIdx = idx.filter((i) => Math.abs(i - activeIdx) <= win);
-    this.wanted = wantIdx.map((i) => binArrayPda(i));
+    this.wanted = wantIdx.map((i) => binArrayPda(i, this.pool));
 
     const next = new Map<number, BinArrayState>();
     for (const i of wantIdx) {
-      const a = infos.get(binArrayPda(i).toBase58());
+      const a = infos.get(binArrayPda(i, this.pool).toBase58());
       if (!a) continue; // not in this snapshot (first tick) -> fetched next tick
       const cached = this.rawCache.get(i);
       if (cached && cached.raw.equals(a.data)) {
@@ -166,7 +217,7 @@ export class MeteoraDlmm implements DlmmVenue {
         continue;
       }
       const ba = decodeBinArray(a.data);
-      if (ba.index !== i || !ba.lbPair.equals(POOL)) throw new Error(`bin array ${i} mismatch`);
+      if (ba.index !== i || !ba.lbPair.equals(this.pool)) throw new Error(`bin array ${i} mismatch`);
       changed = true;
       this.rawCache.set(i, { raw: Buffer.from(a.data), ba });
       next.set(i, ba);
@@ -208,7 +259,7 @@ export class MeteoraDlmm implements DlmmVenue {
     if (lb.status !== 0) return null; // PairStatus::Enabled = 0
     const now = lb.activationType === 0 ? this.clock.slot : BigInt(this.clock.unixTimestamp);
     if (now < lb.activationPoint) return null;
-    if (this.mintX?.transferHookProgram) return null; // transfer hook would need extra accounts
+    if (this.mintX?.transferHookProgram || this.mintY?.transferHookProgram) return null; // transfer hook would need extra accounts
     return lb;
   }
 
@@ -299,13 +350,13 @@ export class MeteoraDlmm implements DlmmVenue {
     }
 
     // bin arrays: traversed ones (in swap order) + extras in swap direction
-    const keys = used.map((i) => binArrayPda(i));
+    const keys = used.map((i) => binArrayPda(i, this.pool));
     let extra = this.opts.extraBinArrays;
     const after = used[used.length - 1];
     const dirIdx = swapForY ? initialized.filter((i) => i < after).reverse() : initialized.filter((i) => i > after);
     for (const i of dirIdx) {
       if (extra-- <= 0) break;
-      keys.push(binArrayPda(i));
+      keys.push(binArrayPda(i, this.pool));
     }
     return { totalIn, totalOut, fee, protocolFee: protocolFee - hostFee, hostFee, endBinId, lastRate, keys, finalActiveId: activeId, v };
   }
@@ -345,6 +396,13 @@ export class MeteoraDlmm implements DlmmVenue {
       endBinId: r.endBinId,
       lastFeeRate: r.lastRate,
     };
+  }
+
+  /** True if the trading fee of `side` is charged on the input token (InputOnly, or OnlyY with Y as input). */
+  feeIsOnInput(side: Side): boolean {
+    const lb = this.lbPair;
+    if (!lb) throw new Error("MeteoraDlmm: no state yet");
+    return this.feeOnInput(lb, side === "sellRise");
   }
 
   /** Host fee is paid in the fee token; with InputOnly fees that is the input token, which is the host account we pass. */
@@ -408,24 +466,24 @@ export class MeteoraDlmm implements DlmmVenue {
     const lb = this.lbPair;
     if (!lb) throw new Error("MeteoraDlmm: no state yet");
     const uk = user.toBase58();
+    const xProg = this.tokenProgramX!;
+    const yProg = this.tokenProgramY!;
     let a = this.ataCache.get(uk);
     if (!a) {
-      a = { rise: ata(user, RISE, TOKEN_2022_PROGRAM), wsol: ata(user, WSOL, TOKEN_PROGRAM) };
+      a = { x: ata(user, lb.tokenXMint, xProg), y: ata(user, lb.tokenYMint, yProg) };
       this.ataCache.set(uk, a);
     }
-    const userRise = a.rise;
-    const userWsol = a.wsol;
-    const [tin, tout] = side === "sellRise" ? [userRise, userWsol] : [userWsol, userRise];
+    const userX = a.x;
+    const userY = a.y;
+    const [tin, tout] = side === "sellRise" ? [userX, userY] : [userY, userX];
     const swapForY = side === "sellRise";
     // host fee is paid in the fee token (input token for InputOnly; Y for OnlyY)
-    const feeToken = this.feeOnInput(lb, swapForY) ? tin : userWsol;
+    const feeToken = this.feeOnInput(lb, swapForY) ? tin : userY;
     const host = this.opts.hostFeeRebate ? feeToken : PROGRAM;
-    const xProg = lb.tokenMintXProgramFlag === 0 ? TOKEN_PROGRAM : TOKEN_2022_PROGRAM;
-    const yProg = lb.tokenMintYProgramFlag === 0 ? TOKEN_PROGRAM : TOKEN_2022_PROGRAM;
     const w = (pubkey: PublicKey) => ({ pubkey, isSigner: false, isWritable: true });
     const r = (pubkey: PublicKey) => ({ pubkey, isSigner: false, isWritable: false });
     return [
-      w(POOL),
+      w(this.pool),
       r(PROGRAM), // bin_array_bitmap_extension = None (all arrays are inside the internal bitmap)
       w(lb.reserveX),
       w(lb.reserveY),

@@ -122,6 +122,29 @@ export interface ShredsUdpConfig {
 /** The reference wallet whose strategy this bot mirrors; used as SIM_USER by default. */
 export const REFERENCE_WALLET = "24Q5e2FRebiFs3iWvN6pZYA4UTGzA3WUsci4ChhgfYEU";
 
+/** Pairs the bot trades (PAIRS, comma-separated). "rise" = the original RISE engine (default). */
+export const KNOWN_PAIRS = ["rise", "max"] as const;
+export type PairName = (typeof KNOWN_PAIRS)[number];
+
+export function parsePairs(v: string | undefined): PairName[] {
+  const list = (v ?? "rise").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
+  for (const p of list) if (!(KNOWN_PAIRS as readonly string[]).includes(p)) throw new Error(`PAIRS: unknown pair "${p}" (known: ${KNOWN_PAIRS.join(", ")})`);
+  if (!list.length) throw new Error("PAIRS must name at least one pair");
+  return [...new Set(list)] as PairName[];
+}
+
+/** Generic pair engines (src/engine/pair-engine.ts). */
+export interface PairsConfig {
+  /** PAIRS (default "rise": the RISE engine only, unchanged behaviour). */
+  enabled: PairName[];
+  /** Wallet the pair engines simulate as without a keypair (PAIR_SIM_USER; default per pair). */
+  simUser?: PublicKey;
+  /** Address lookup tables for pair txs that do not fit a legacy message (PAIR_LOOKUP_TABLES). */
+  lookupTables: string[];
+  /** Simulate mode only: sub-floor latency probe sims every N ms (PAIR_FORCE_SIM_MS, 0 = off). */
+  forceSimMs: number;
+}
+
 export interface Config {
   rpcUrl: string;
   mode: Mode;
@@ -178,6 +201,7 @@ export interface Config {
   delivery: Delivery;
   jito: JitoConfig;
   risk: RiskConfig;
+  pairs: PairsConfig;
 }
 
 function env(name: string, def?: string): string | undefined {
@@ -288,6 +312,12 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
         tipAccountsTtlMs: num("JITO_TIP_ACCOUNTS_TTL_MS", 600_000),
       },
       risk,
+      pairs: {
+        enabled: parsePairs(env("PAIRS")),
+        simUser: env("PAIR_SIM_USER") ? new PublicKey(env("PAIR_SIM_USER")!) : undefined,
+        lookupTables: (env("PAIR_LOOKUP_TABLES") ?? "").split(",").map((x) => x.trim()).filter(Boolean).map((x) => new PublicKey(x).toBase58()),
+        forceSimMs: mode === "simulate" ? num("PAIR_FORCE_SIM_MS", 0) : 0,
+      },
     };
   } finally {
     process.env = saved;

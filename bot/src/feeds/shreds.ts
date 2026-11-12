@@ -246,6 +246,17 @@ export interface WatchSet {
   reserves: string[];
   /** Fee payers treated as our own (never "competing"). */
   ownSigners: Set<string>;
+  /**
+   * Generic pairs (e.g. MAX: PumpSwap pool + DLMM pool). A tx whose keys include accounts of
+   * >= 2 of a pair's pools is an "arb" hint for that pair, one pool a "pool-swap" hint.
+   * Each pool lists its own identifying accounts (pool address, vaults/reserves).
+   */
+  pairs?: PairWatch[];
+}
+
+export interface PairWatch {
+  name: string;
+  pools: { name: string; accounts: string[] }[];
 }
 
 /** Meteora DLMM reserve PDA = [lb_pair, mint] under the DLMM program (as in @meteora-ag/dlmm deriveReserve). */
@@ -276,6 +287,10 @@ export interface ShredHit {
   programs: string[];
   /** Address-lookup tables we could not resolve (keys hidden in them were not checked). */
   unresolvedLookups: number;
+  /** Generic pair this hit belongs to (undefined = the RISE pool / program). */
+  pair?: string;
+  /** Pools of that pair the tx references. */
+  pools?: string[];
   cuPriceMicroLamports?: bigint;
   cuLimit?: number;
   v1PriorityFee?: bigint;
@@ -307,7 +322,8 @@ function computeBudget(tx: DecodedTx): { price?: bigint; limit?: number } {
 export function classifyTx(tx: DecodedTx, slot: number, w: WatchSet, resolver?: LookupResolver, receivedAt = 0): ShredHit | null {
   const keys = new Set(tx.staticKeys);
   const programs = [...new Set(tx.instructions.map((ix) => tx.staticKeys[ix.programIdIndex]).filter((k): k is string => !!k))];
-  const interesting = keys.has(w.riseProgram) || keys.has(w.dlmmProgram) || keys.has(w.pool);
+  const pairHit = (k: Set<string>) => w.pairs?.some((p) => p.pools.some((pl) => pl.accounts.some((a) => k.has(a)))) ?? false;
+  const interesting = keys.has(w.riseProgram) || keys.has(w.dlmmProgram) || keys.has(w.pool) || pairHit(keys);
   let unresolved = 0;
   for (const l of tx.lookups) {
     const t = resolver?.get(l.table, interesting);
@@ -317,15 +333,22 @@ export function classifyTx(tx: DecodedTx, slot: number, w: WatchSet, resolver?: 
   }
   const rise = keys.has(w.riseProgram);
   const pool = keys.has(w.pool) || w.reserves.some((r) => keys.has(r));
-  if (!rise && !pool) return null;
-  const kind: HitKind = rise && pool ? "arb" : pool ? "pool-swap" : "rise";
   const feePayer = tx.staticKeys[0] ?? "";
   const cb = computeBudget(tx);
-  return {
-    slot, signature: tx.signatures[0] ?? "", feePayer, kind, own: w.ownSigners.has(feePayer), version: tx.version, programs,
+  const base = {
+    slot, signature: tx.signatures[0] ?? "", feePayer, own: w.ownSigners.has(feePayer), version: tx.version, programs,
     unresolvedLookups: unresolved, cuPriceMicroLamports: cb.price, cuLimit: cb.limit ?? tx.v1Config?.computeUnitLimit,
     v1PriorityFee: tx.v1Config?.priorityFee, receivedAt,
   };
+  if (rise || pool) {
+    const kind: HitKind = rise && pool ? "arb" : pool ? "pool-swap" : "rise";
+    return { ...base, kind };
+  }
+  for (const p of w.pairs ?? []) {
+    const touched = p.pools.filter((pl) => pl.accounts.some((a) => keys.has(a))).map((pl) => pl.name);
+    if (touched.length) return { ...base, kind: touched.length >= 2 ? "arb" : "pool-swap", pair: p.name, pools: touched };
+  }
+  return null;
 }
 
 // ============================ lookup-table cache ============================
@@ -370,21 +393,30 @@ export class PendingActivity {
     while (this.hits.length && this.hits[0].receivedAt < cutoff) this.hits.shift();
     if (this.hits.length > 1000) this.hits.splice(0, this.hits.length - 1000);
   }
-  /** A non-own arb on the pool seen at a slot >= `slot` (i.e. not yet reflected in that snapshot) within the window. */
-  competingArb(slot: number): ShredHit | null {
+  /**
+   * A non-own arb seen at a slot >= `slot` (i.e. not yet reflected in that snapshot) within the
+   * window. `pair` selects a generic pair's hits (undefined = the RISE pool, as before).
+   */
+  competingArb(slot: number, pair?: string): ShredHit | null {
     this.prune();
     for (let i = this.hits.length - 1; i >= 0; i--) {
       const h = this.hits[i];
-      if (h.kind === "arb" && !h.own && h.slot >= slot) return h;
+      if (h.kind === "arb" && !h.own && h.slot >= slot && h.pair === pair) return h;
     }
     return null;
   }
-  /** Counts of recent non-own hits at slot >= `slot` (attached to ledger opportunities). */
-  summary(slot: number): { arb: number; poolSwap: number; rise: number } {
+  /** Most recent non-own hit for `pair` (any kind) within the window (latency marker for pair engines). */
+  latest(pair?: string): ShredHit | null {
+    this.prune();
+    for (let i = this.hits.length - 1; i >= 0; i--) if (!this.hits[i].own && this.hits[i].pair === pair) return this.hits[i];
+    return null;
+  }
+  /** Counts of recent non-own hits at slot >= `slot` (attached to ledger opportunities); `pair` as above. */
+  summary(slot: number, pair?: string): { arb: number; poolSwap: number; rise: number } {
     this.prune();
     const s = { arb: 0, poolSwap: 0, rise: 0 };
     for (const h of this.hits) {
-      if (h.own || h.slot < slot) continue;
+      if (h.own || h.slot < slot || h.pair !== pair) continue;
       if (h.kind === "arb") s.arb++; else if (h.kind === "pool-swap") s.poolSwap++; else s.rise++;
     }
     return s;
@@ -591,8 +623,8 @@ export function reportHits(hits: ShredHit[], o: HitSink, tag = "shred", extra?: 
   for (const h of hits) {
     o.pending?.record(h);
     const fee = h.cuPriceMicroLamports !== undefined ? ` cuPrice=${h.cuPriceMicroLamports}µ cuLimit=${h.cuLimit ?? "?"}` : h.v1PriorityFee !== undefined ? ` v1PriorityFee=${h.v1PriorityFee}` : "";
-    o.log(`[${tag} ${h.slot}] pending ${h.own ? "OWN " : ""}${h.kind} ${h.signature.slice(0, 16)}… payer ${h.feePayer.slice(0, 8)}… v${h.version}${fee}${h.unresolvedLookups ? ` (${h.unresolvedLookups} unresolved ALTs)` : ""}${extra ? extra(h) : ""}`);
+    o.log(`[${tag} ${h.slot}] pending ${h.own ? "OWN " : ""}${h.pair ? `${h.pair} ` : ""}${h.kind} ${h.signature.slice(0, 16)}… payer ${h.feePayer.slice(0, 8)}… v${h.version}${fee}${h.unresolvedLookups ? ` (${h.unresolvedLookups} unresolved ALTs)` : ""}${extra ? extra(h) : ""}`);
   }
   const first = hits.find((h) => !h.own);
-  if (first) o.signal?.notify(`shred:${first.kind}`);
+  if (first) o.signal?.notify(first.pair ? `shred:${first.pair}:${first.kind}` : `shred:${first.kind}`);
 }

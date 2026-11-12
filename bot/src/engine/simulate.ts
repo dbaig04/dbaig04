@@ -44,7 +44,10 @@ export interface SimResult {
 
 const abs = (x: bigint) => (x < 0n ? -x : x);
 
-export async function simulateArb(conn: SimConnection, tx: VersionedTransaction, plan: Plan, p: SimParams): Promise<SimResult> {
+/** What the sim needs from a plan (RISE Plan or generic pair plan: lamportsIn = net quoted spend). */
+export type SimPlan = Pick<Plan, "lamportsIn" | "lamportsOut"> & { direction?: string; leg1Quote?: bigint };
+
+export async function simulateArb(conn: SimConnection, tx: VersionedTransaction, plan: SimPlan, p: SimParams): Promise<SimResult> {
   let res;
   try {
     res = await conn.simulateTransaction(tx, {
@@ -77,7 +80,7 @@ export async function simulateArb(conn: SimConnection, tx: VersionedTransaction,
   const tol = (() => { const t = (abs(expectedProfit) * p.toleranceBps) / 10_000n; return t > p.toleranceLamports ? t : p.toleranceLamports; })();
   // Worst-case lamportsIn may exceed the quoted spend by the slippage allowance (buyThenRedeem);
   // a sim that spends less is legitimately better than "expected" by up to that much.
-  const slipAllowance = plan.direction === "buyThenRedeem" ? plan.lamportsIn - plan.leg1Quote : 0n;
+  const slipAllowance = plan.direction === "buyThenRedeem" && plan.leg1Quote !== undefined ? plan.lamportsIn - plan.leg1Quote : 0n;
   if (simulatedProfit < expectedProfit - tol || simulatedProfit > expectedProfit + tol + slipAllowance)
     return { ...r, reason: `sim profit ${simulatedProfit} deviates from expected ${expectedProfit} beyond tolerance ${tol}` };
   return { ...r, ok: true };

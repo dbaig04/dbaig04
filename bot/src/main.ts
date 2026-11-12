@@ -7,7 +7,10 @@ import type { DlmmVenue, RiseVenue } from "./types.js";
 import { ArbEngine } from "./engine/engine.js";
 import { fetchRealized, Ledger, reconcileBalances, toJson } from "./engine/ledger.js";
 import { JitoClient, JitoSender, RpcSender, type Sender, type TxPreparer } from "./engine/sender.js";
-import { DAILY_HALTS, ProgramUpgradeGuard, resolveOrphanInFlight, RiskGuard, WATCHED_PROGRAMS } from "./engine/risk.js";
+import { DAILY_HALTS, ProgramUpgradeGuard, resolveOrphanInFlight, RiskGuard, WATCHED_PROGRAMS, watchedProgramsFor } from "./engine/risk.js";
+import { PairEngine } from "./engine/pair-engine.js";
+import { MAX_SIM_USER, maxPairSpec, maxShredWatch } from "./engine/pair-venues.js";
+import { PublicKey, type AddressLookupTableAccount } from "@solana/web3.js";
 import { decodeTokenAmount } from "./engine/state.js";
 import { RiseNative } from "./rise/index.js";
 import { MeteoraDlmm } from "./meteora/index.js";
@@ -47,6 +50,29 @@ function makeDelivery(cfg: Config, conn: Connection, sendConn: Connection | unde
   return { sender, describe: sendConn ? "rpc via SEND_RPC_URL" : "rpc via RPC_URL" };
 }
 
+/** Generic pair engines enabled by PAIRS (RISE is the ArbEngine above). */
+async function createPairEngines(cfg: Config, conn: Connection, d: { ledger: Ledger; risk: RiskGuard; sender?: Sender; preparer?: TxPreparer; infra: ReturnType<typeof setupInfra> }): Promise<PairEngine[]> {
+  const out: PairEngine[] = [];
+  const alts: AddressLookupTableAccount[] = [];
+  for (const k of cfg.pairs.lookupTables) {
+    const r = await conn.getAddressLookupTable(new PublicKey(k));
+    if (!r.value) throw new Error(`PAIR_LOOKUP_TABLES: ${k} not found`);
+    alts.push(r.value);
+  }
+  for (const name of cfg.pairs.enabled) {
+    if (name !== "max") continue;
+    const spec = maxPairSpec();
+    // without a keypair (simulate), simulate as a wallet that holds wSOL + MAX ATAs
+    const user = cfg.keypair ? cfg.keypair.publicKey : cfg.pairs.simUser ?? new PublicKey(MAX_SIM_USER);
+    out.push(new PairEngine({
+      conn, cfg, ledger: d.ledger, risk: d.risk, sender: d.sender, preparer: d.preparer, user,
+      pair: { ...spec, lookupTables: alts }, stateProvider: d.infra.stateProvider, pending: d.infra.pending,
+      forceSimEveryMs: cfg.pairs.forceSimMs,
+    }));
+  }
+  return out;
+}
+
 async function readAtaBalances(conn: Connection, engine: ArbEngine): Promise<{ wsol: bigint; rise: bigint } | null> {
   const [w, r] = await conn.getMultipleAccountsInfo([engine.wsolAta, engine.riseAta], "confirmed");
   if (!w || !r) return null;
@@ -65,25 +91,37 @@ async function main() {
   writeFileSync(cfg.risk.pidFile, String(process.pid));
   if (risk.halt()) console.error(`starting halted: ${risk.halt()!.reason}`);
 
-  const { rise, dlmm } = await createVenues(conn, cfg);
+  const withRise = cfg.pairs.enabled.includes("rise");
   // optional ERPC infra: Geyser gRPC state, ShredStream hints, SEND_RPC_URL (SWQoS) delivery
-  const infra = setupInfra(cfg, conn, console.log, { onShredsUdpSummary: (s) => ledger.append("latency", s) });
+  const infra = setupInfra(cfg, conn, console.log, { onShredsUdpSummary: (s) => ledger.append("latency", s), pairWatch: cfg.pairs.enabled.includes("max") ? [maxShredWatch()] : [] });
   const delivery = makeDelivery(cfg, conn, infra.sendConn);
-  const engine = new ArbEngine({ conn, rise, dlmm, cfg, ledger, sender: delivery.sender, preparer: delivery.preparer, risk, stateProvider: infra.stateProvider, pending: infra.pending });
+  let engine: ArbEngine | null = null;
+  if (withRise) {
+    const { rise, dlmm } = await createVenues(conn, cfg);
+    engine = new ArbEngine({ conn, rise, dlmm, cfg, ledger, sender: delivery.sender, preparer: delivery.preparer, risk, stateProvider: infra.stateProvider, pending: infra.pending });
+  }
+  const pairEngines = await createPairEngines(cfg, conn, { ledger, risk, sender: delivery.sender, preparer: delivery.preparer, infra });
+  const engines: { tick(trigger?: string): Promise<unknown>; readonly inFlight: boolean; readonly lossLimitHit: boolean; readonly sessionNetLamports: bigint; close(): void }[] = [...(engine ? [engine] : []), ...pairEngines];
 
-  // Program-upgrade guard: RISE + Meteora DLMM programdata deploy slot (45-byte dataSlice) every UPGRADE_CHECK_MS.
-  const upgrades = new ProgramUpgradeGuard(conn, risk, WATCHED_PROGRAMS, { intervalMs: cfg.risk.upgradeCheckMs, log: console.log });
+  // Program-upgrade guard: programdata deploy slot (45-byte dataSlice) every UPGRADE_CHECK_MS of RISE +
+  // Meteora DLMM (RISE engine) and every upgradeable program a pair venue uses (PumpSwap, DLMM).
+  const base = withRise ? WATCHED_PROGRAMS : [];
+  const extra = await watchedProgramsFor(conn, pairEngines.flatMap((e) => [e.venues.a, e.venues.b]).flatMap((v) => v.programIds().map((p) => ({ name: v.name.split(":")[0], programId: p.toBase58() }))), base);
+  for (const x of extra.immutable) console.log(`program ${x}: not upgradeable, not watched`);
+  const upgrades = new ProgramUpgradeGuard(conn, risk, [...base, ...extra.watch], { intervalMs: cfg.risk.upgradeCheckMs, log: console.log });
   const programs = await upgrades.init();
   for (const [k, v] of Object.entries(programs)) console.log(`program ${k}: ${v}`);
   upgrades.start();
 
-  const realize = (sig: string) => fetchRealized(conn, sig, cfg.user.toBase58(), engine.wsolAta.toBase58(), engine.riseAta.toBase58(), { kind: "other" });
-  const resolveOrphan = () => resolveOrphanInFlight({ risk, conn, ledger, realize, baseFeeLamports: cfg.baseFeeLamports, user: cfg.user.toBase58(), log: console.log });
+  // orphan realize: the RISE ATAs when the RISE engine runs, else the first pair engine's wSOL/token ATAs
+  const ataPair = engine ? { wsol: engine.wsolAta, tok: engine.riseAta, user: cfg.user } : { wsol: pairEngines[0].wsolAta, tok: pairEngines[0].tokenAta, user: pairEngines[0].user };
+  const realize = (sig: string) => fetchRealized(conn, sig, ataPair.user.toBase58(), ataPair.wsol.toBase58(), ataPair.tok.toBase58(), { kind: "other" });
+  const resolveOrphan = () => resolveOrphanInFlight({ risk, conn, ledger, realize, baseFeeLamports: cfg.baseFeeLamports, user: ataPair.user.toBase58(), log: console.log });
   // A tx left in flight by a previous run must be resolved before anything else is sent.
   await resolveOrphan();
 
   // Startup reconcile: on-chain wSOL/RISE vs the ledger's running totals since the last snapshot.
-  const bal = await readAtaBalances(conn, engine).catch(() => null);
+  const bal = engine ? await readAtaBalances(conn, engine).catch(() => null) : null;
   if (bal) {
     const evs = Ledger.read(cfg.ledgerPath);
     const rec = reconcileBalances(evs, cfg.user.toBase58(), bal);
@@ -96,8 +134,9 @@ async function main() {
   }
 
   infra.start();
-  console.log(`mode=${cfg.mode} user=${cfg.user.toBase58()}${cfg.keypair ? "" : " (no keypair: read-only simulation)"} delivery=${delivery.describe}`);
-  console.log(`wSOL ATA ${engine.wsolAta.toBase58()}  RISE ATA ${engine.riseAta.toBase58()}`);
+  console.log(`mode=${cfg.mode} pairs=${cfg.pairs.enabled.join(",")} user=${cfg.user.toBase58()}${cfg.keypair ? "" : " (no keypair: read-only simulation)"} delivery=${delivery.describe}`);
+  if (engine) console.log(`wSOL ATA ${engine.wsolAta.toBase58()}  RISE ATA ${engine.riseAta.toBase58()}`);
+  for (const p of pairEngines) console.log(`pair ${p.name}: ${p.venues.a.name} <-> ${p.venues.b.name}; user ${p.user.toBase58()} wSOL ATA ${p.wsolAta.toBase58()} token ATA ${p.tokenAta.toBase58()}`);
   console.log(`infra: ${Object.entries(infra.describe()).map(([k, v]) => `${k}=${v}`).join("  ")}`);
   console.log(`risk: ${Object.entries(describeConfig(cfg)).filter(([k]) => k.startsWith("risk.")).map(([k, v]) => `${k.slice(5)}=${v}`).join(" ")}`);
   ledger.append("start", { config: describeConfig(cfg), infra: infra.describe(), delivery: delivery.describe, programs, risk: risk.snapshot() });
@@ -106,7 +145,7 @@ async function main() {
   const stop = (sig: string) => {
     if (stopping) { console.log(`${sig} again: exiting now`); process.exit(130); }
     stopping = true;
-    console.log(`${sig}: stopping after the current tick${engine.inFlight ? " (waiting for in-flight tx)" : ""}...`);
+    console.log(`${sig}: stopping after the current tick${engines.some((e) => e.inFlight) ? " (waiting for in-flight tx)" : ""}...`);
   };
   process.on("SIGINT", () => stop("SIGINT"));
   process.on("SIGTERM", () => stop("SIGTERM"));
@@ -118,8 +157,12 @@ async function main() {
     const t0 = Date.now();
     try {
       if (risk.orphanInFlight) await resolveOrphan();
-      // serialized: the next tick starts only after this one (including any in-flight tx) is done
-      await engine.tick(trigger);
+      // serialized: the next tick starts only after this one (including any in-flight tx) is done;
+      // engines tick one after another, so there is never more than one tx in flight overall
+      for (const e of engines) {
+        if (stopping || risk.halt()) break;
+        await e.tick(trigger);
+      }
       backoff = 0;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -127,9 +170,10 @@ async function main() {
       ledger.append("error", { message: msg });
       backoff = Math.min(30_000, backoff ? backoff * 2 : 1000);
     }
-    if (engine.lossLimitHit) {
-      console.error(`session loss limit hit (${engine.sessionNetLamports} lamports): stopping`);
-      ledger.append("halt", { reason: "session-loss", detail: `session net ${engine.sessionNetLamports} < -${cfg.maxSessionLossLamports}`, at: new Date().toISOString() });
+    const sessionNet = engines.reduce((a, e) => a + e.sessionNetLamports, 0n);
+    if (engines.some((e) => e.lossLimitHit) || sessionNet < -cfg.maxSessionLossLamports) {
+      console.error(`session loss limit hit (${sessionNet} lamports): stopping`);
+      ledger.append("halt", { reason: "session-loss", detail: `session net ${sessionNet} < -${cfg.maxSessionLossLamports}`, at: new Date().toISOString() });
       stopReason = "session-loss";
       break;
     }
@@ -153,13 +197,14 @@ async function main() {
     if (!stopping && (wait || infra.eventDriven)) trigger = await infra.wait(wait);
   }
   upgrades.stop();
-  (engine as { close?: () => void }).close?.();
+  for (const e of engines) e.close();
   infra.close();
-  const endBal = await readAtaBalances(conn, engine).catch(() => null);
+  const endBal = engine ? await readAtaBalances(conn, engine).catch(() => null) : null;
   if (endBal) ledger.append("balances", { user: cfg.user.toBase58(), wsol: endBal.wsol, rise: endBal.rise, at: "stop" });
-  ledger.append("stop", { sessionNetLamports: engine.sessionNetLamports, reason: stopReason, risk: risk.snapshot() });
+  const sessionNetLamports = engines.reduce((a, e) => a + e.sessionNetLamports, 0n);
+  ledger.append("stop", { sessionNetLamports, reason: stopReason, risk: risk.snapshot() });
   try { if (existsSync(cfg.risk.pidFile)) rmSync(cfg.risk.pidFile); } catch { /* ignore */ }
-  console.log(`stopped (${stopReason}). session realized net ${toJson(engine.sessionNetLamports)} lamports`);
+  console.log(`stopped (${stopReason}). session realized net ${toJson(sessionNetLamports)} lamports`);
 }
 
 main().catch((e) => {

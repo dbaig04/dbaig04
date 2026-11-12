@@ -148,7 +148,7 @@ export function unrealizedLandedOutcome(signature: string, kind: Direction | "ot
 /** Raw JSON-RPC getTransaction (same shape as saved reference txs). */
 export async function fetchRawTx(conn: Connection, signature: string, commitment: "confirmed" | "finalized" = "confirmed"): Promise<RawTx | null> {
   const rpc = (conn as unknown as { _rpcRequest: (m: string, a: unknown[]) => Promise<{ result?: RawTx | null; error?: { message: string } }> })._rpcRequest;
-  const res = await rpc.call(conn, "getTransaction", [signature, { encoding: "json", maxSupportedTransactionVersion: 0, commitment }]);
+  const res = await rpc.call(conn, "getTransaction", [signature, { encoding: "json", maxSupportedTransactionVersion: 1, commitment }]);
   if (res.error) throw new Error(`getTransaction: ${res.error.message}`);
   return res.result ?? null;
 }
