@@ -102,6 +102,30 @@ MODE=live KEYPAIR_PATH=~/bot.keypair.json CONFIRM_LIVE=yes RPC_URL=https://<your
 
 All variables, with placeholders, are listed in [`deploy/.env.example`](deploy/.env.example).
 
+## Generic pairs (MAX: PumpSwap ⇄ Meteora DLMM)
+
+`PAIRS` selects engines: `rise` (default, the RISE engine above, unchanged), `max`, or `rise,max`. Engines tick one after
+another in the same loop and share one `RiskGuard`, so there is still exactly one tx in flight overall.
+
+- **Routes**: MAX trades the PumpSwap pool (`MAX_PUMPSWAP_POOL`, default `Eoe22Hd…`) against each selected DLMM pool
+  (`MAX_DLMM_POOLS=5nwdWt,6PkALv,H6Bcgd`, default all three; see `src/pumpswap/pools.ts`). The PumpSwap state is
+  fetched once per tick and shared; every route is optimized each tick and the single best plan across routes is taken.
+- **Round trip**: exact-in buy (lamports → MAX), then exact-in sell of exactly the received MAX. Leg-1 min-out = quoted
+  MAX; final min-out = net lamports in + at-risk DLMM SOL rebate + base + priority + tip + floor (on-chain floor).
+- **Sizing** (`src/engine/pair-optimizer.ts`): one exact round trip at the min size bounds the profit (both venues are
+  concave), skipping the direction when even the bound misses the floor; otherwise a coarse grid of exact µs quotes,
+  then golden-section / pattern / integer-window refinement. Tested against dense brute force (synthetic + recorded
+  mainnet snapshots with synthetic competitor swaps; `test/pair-*.test.ts`). PumpSwap buy output is monotone only at
+  ≥ 4-lamport steps; the integer window and the 1,000-lamport test tolerance cover that.
+- **Prerequisites**: the engine refuses to trade until the PumpSwap `user_volume_accumulator` exists (a buy would
+  otherwise create it, rent inside the trade tx). `PAIRS=max npx tsx src/engine/setup.ts` creates it and the MAX ATA.
+- **Simulate mode** simulates as `PAIR_SIM_USER` (default `8pY1Au…`, which holds wSOL + MAX ATAs). `PAIR_FORCE_SIM_MS`
+  adds sub-floor latency-probe simulations (simulate mode only, never sendable). `PAIR_LOOKUP_TABLES` for v0 txs if a
+  route's legacy message ever exceeds 1,232 B (measured 1,079 B).
+- Upgrade guard also watches every upgradeable program of the pair venues; shred feeds flag txs touching ≥ 2 MAX pools
+  (`shred:max:arb` wakes the loop, requote + hint latency marker).
+- Research / shadow tools: `src/research/` (`COMPETITOR.md`, `SHADOW.md`, `shadow-run.ts`, `report.ts`).
+
 ## Safety defaults
 
 - **Simulate mode is the default.** It never signs or sends. With no keypair it simulates as `SIM_USER`, with

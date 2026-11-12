@@ -13,6 +13,7 @@ import { buildPairTx, compileFitting, pairFinalMinOut } from "../src/engine/pair
 import { PairEngine } from "../src/engine/pair-engine.js";
 import { chooseExecutionFees } from "../src/engine/fees.js";
 import { BinVenue, CpVenue, ladder, pairChain } from "./pair-fakes.js";
+import { tokenAccountInfo } from "./engine-fakes.js";
 
 const MAX = new PublicKey("5qaP7oKUqKffwwo5DaEqDoTtsBLMpdbQTxEkCDaTpump");
 const policy = { baseFeeLamports: 5_000n, maxPriorityFeeLamports: 50_000n, maxTipLamports: 50_000n, maxShareBps: 1_000n, tipEnabled: false };
@@ -255,4 +256,27 @@ test("pair engine: multiple routes share venue A; every route is quoted each tic
     const keys = ch.sims.at(-1)!.message.staticAccountKeys;
     assert.ok(keys.some((k) => k.equals(b2.programId)) && !keys.some((k) => k.equals(b1.programId)));
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("pair engine: refuses to trade until a venue's required user account (PumpSwap user_volume_accumulator) exists", async () => {
+  const s = setup();
+  try {
+    const uva = Keypair.generate().publicKey;
+    // rebuild the engine with venue A requiring `uva`
+    (s.a as unknown as { requiredUserAccounts: () => { account: PublicKey; why: string }[] }).requiredUserAccounts = () => [{ account: uva, why: "test uva" }];
+    const eng = new PairEngine({ conn: s.ch.conn as never, cfg: cfgWith(), ledger: s.ledger, user: (s.eng as unknown as { user: PublicKey }).user, log: () => {}, pair: { name: "max", a: s.a, b: s.b, tokenMint: MAX, tokenProgram: TOKEN_2022_PROGRAM_ID } });
+    s.a.apply("sell", s.a.y / 20n);
+    s.ch.bump();
+    const r = await eng.tick();
+    assert.equal(r.status, "missing-prereq");
+    assert.equal(s.ch.sims.length, 0, "nothing is built or simulated");
+    assert.ok(Ledger.read(s.ledger.path).some((e) => e.type === "risk" && e.stage === "prereq"));
+    // the account appears
+    const orig = s.ch.conn.getMultipleAccountsInfoAndContext;
+    s.ch.conn.getMultipleAccountsInfoAndContext = async (ks: PublicKey[]) => { const r0 = await orig(ks); return { ...r0, value: r0.value.map((v, i) => (ks[i].equals(uva) ? tokenAccountInfo(0n) : v)) }; };
+    s.ch.bump();
+    const r2 = await eng.tick();
+    eng.close();
+    assert.equal(r2.status, "simulated");
+  } finally { s.done(); }
 });

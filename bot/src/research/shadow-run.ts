@@ -15,7 +15,7 @@ import { makeReadConnection } from "../feeds/index.js";
 import { Ledger } from "../engine/ledger.js";
 import { PairEngine, type PairTickInfo } from "../engine/pair-engine.js";
 import { ShadowRecorder } from "../engine/shadow.js";
-import { MAX_DLMM_POOLS, MAX_PUMPSWAP_POOL, MAX_SIM_USER, maxPairSpec } from "../engine/pair-venues.js";
+import { MAX_PUMPSWAP_POOL, MAX_SIM_USER, maxPairSpec, selectedDlmmPools } from "../engine/pair-venues.js";
 import { CompetitorWatcher } from "./competitors.js";
 import { RateLimitedRpc } from "./rpc.js";
 import { compare, renderShadowMd, summarizeTicks, untakenOpportunities } from "./shadow-report.js";
@@ -39,9 +39,8 @@ async function main() {
   const mdPath = process.env.SHADOW_MD ?? "src/research/SHADOW.md";
   const conn = makeReadConnection(cfg);
   const ledger = new Ledger(join(dir, "ledger.jsonl"));
-  const pools = (process.env.MAX_DLMM_POOLS ?? "").split(",").map((x) => x.trim()).filter(Boolean);
-  const dlmmPools = pools.length ? pools : [...MAX_DLMM_POOLS];
-  const spec = maxPairSpec(dlmmPools);
+  const dlmmPools = selectedDlmmPools();
+  const spec = maxPairSpec();
   const lookupTables: AddressLookupTableAccount[] = [];
   for (const k of (process.env.PAIR_LOOKUP_TABLES ?? "").split(",").filter(Boolean)) {
     const r = await conn.getAddressLookupTable(new PublicKey(k));

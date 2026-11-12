@@ -93,7 +93,7 @@ export interface PairTickInfo {
   hint?: { slot: number; signature: string; feePayer: string; kind: string; hintToTickMs: number; hintToDecisionMs?: number } | null;
 }
 
-export type PairTickStatus = "stale" | "no-balance" | "no-opportunity" | "held" | "build-failed" | "sim-rejected" | "risk-rejected" | "halted" | "simulated" | "sent";
+export type PairTickStatus = "stale" | "no-balance" | "missing-prereq" | "no-opportunity" | "held" | "build-failed" | "sim-rejected" | "risk-rejected" | "halted" | "simulated" | "sent";
 
 export interface PairTickResult {
   status: PairTickStatus;
@@ -135,6 +135,26 @@ export interface PairEngineDeps {
   onTick?: (info: PairTickInfo) => void;
 }
 
+/** Venue hook: user accounts that must already exist (e.g. PumpSwap's user_volume_accumulator). */
+type PrereqVenue = SwapVenue & { requiredUserAccounts?(user: PublicKey): { account: PublicKey; why: string }[] };
+
+/** Tracks existence of the venues' required user accounts in the same snapshot. */
+export class UserPrereqs implements StateSource {
+  readonly list: { account: PublicKey; why: string }[];
+  missing: { account: PublicKey; why: string }[] = [];
+  seen = false;
+  constructor(venues: SwapVenue[], user: PublicKey) {
+    const m = new Map<string, { account: PublicKey; why: string }>();
+    for (const v of venues as PrereqVenue[]) for (const r of v.requiredUserAccounts?.(user) ?? []) m.set(r.account.toBase58(), r);
+    this.list = [...m.values()];
+  }
+  accounts(): PublicKey[] { return this.list.map((r) => r.account); }
+  update(_slot: number, infos: Map<string, import("@solana/web3.js").AccountInfo<Buffer> | null>): void {
+    this.missing = this.list.filter((r) => !infos.get(r.account.toBase58()));
+    this.seen = true;
+  }
+}
+
 const fmt = (l: bigint) => (Number(l) / 1e9).toFixed(9);
 const r1 = (x: number) => Math.round(x * 10) / 10;
 
@@ -156,6 +176,8 @@ export class PairEngine {
   private cuLearned: Record<string, number> = {};
   private optCache = new Map<string, { key: string; res: PairOptimizeResult }>();
   readonly routes: PairRoute[];
+  readonly prereqs: UserPrereqs;
+  private prereqWarned = "";
   private lastForced = 0;
 
   constructor(private d: PairEngineDeps) {
@@ -165,7 +187,8 @@ export class PairEngine {
     this.tokenAta = getAssociatedTokenAddressSync(d.pair.tokenMint, this.user, true, d.pair.tokenProgram);
     this.balances = new TokenBalances(this.wsolAta, this.tokenAta);
     this.routes = d.pair.routes?.length ? d.pair.routes : [{ name: d.pair.name, a: d.pair.a, b: d.pair.b }];
-    const sources: StateSource[] = [...this.allVenues(), this.balances];
+    this.prereqs = new UserPrereqs(this.allVenues(), this.user);
+    const sources: StateSource[] = [...this.allVenues(), this.balances, this.prereqs];
     const polling = new StateManager(d.conn, sources, d.cfg.commitment);
     this.state = d.stateProvider ? d.stateProvider(sources, polling) : polling;
     this.latency = new LatencyStats(d.cfg.latencySummaryMs ?? 60_000);
@@ -289,6 +312,13 @@ export class PairEngine {
       this.log(`[${this.name} ${slot}] user token accounts missing (wSOL ${this.wsolAta.toBase58()} / token ${this.tokenAta.toBase58()})`);
       return { status: "no-balance", slot };
     }
+    // e.g. PumpSwap user_volume_accumulator: a buy would create it (one-time rent) inside the trade tx
+    if (this.prereqs.missing.length) {
+      const why = this.prereqs.missing.map((m) => `${m.account.toBase58()} (${m.why})`).join("; ");
+      if (why !== this.prereqWarned) { this.log(`[${this.name} ${slot}] not trading: required user account missing: ${why}`); ledger.append("risk", { pair: this.name, slot, stage: "prereq", reasons: [`missing ${why}`] }); this.prereqWarned = why; }
+      return { status: "missing-prereq", slot };
+    }
+    this.prereqWarned = "";
     const cap = [cfg.maxTradeLamports, cfg.maxWsolLamports, wsol, cfg.risk.maxInputLamports].reduce((a, b) => (a < b ? a : b));
     const floor = this.profitFloor();
     const policy = this.execPolicy();

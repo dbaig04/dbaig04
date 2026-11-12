@@ -61,7 +61,7 @@ async function createPairEngines(cfg: Config, conn: Connection, d: { ledger: Led
   }
   for (const name of cfg.pairs.enabled) {
     if (name !== "max") continue;
-    const spec = cfg.pairs.maxDlmmPools.length ? maxPairSpec(cfg.pairs.maxDlmmPools) : maxPairSpec();
+    const spec = maxPairSpec(); // MAX_PUMPSWAP_POOL / MAX_DLMM_POOLS (src/pumpswap/pools.ts); default all three DLMM routes
     // without a keypair (simulate), simulate as a wallet that holds wSOL + MAX ATAs
     const user = cfg.keypair ? cfg.keypair.publicKey : cfg.pairs.simUser ?? new PublicKey(MAX_SIM_USER);
     out.push(new PairEngine({
@@ -93,7 +93,7 @@ async function main() {
 
   const withRise = cfg.pairs.enabled.includes("rise");
   // optional ERPC infra: Geyser gRPC state, ShredStream hints, SEND_RPC_URL (SWQoS) delivery
-  const infra = setupInfra(cfg, conn, console.log, { onShredsUdpSummary: (s) => ledger.append("latency", s), pairWatch: cfg.pairs.enabled.includes("max") ? [cfg.pairs.maxDlmmPools.length ? maxShredWatch(cfg.pairs.maxDlmmPools) : maxShredWatch()] : [] });
+  const infra = setupInfra(cfg, conn, console.log, { onShredsUdpSummary: (s) => ledger.append("latency", s), pairWatch: cfg.pairs.enabled.includes("max") ? [maxShredWatch()] : [] });
   const delivery = makeDelivery(cfg, conn, infra.sendConn);
   let engine: ArbEngine | null = null;
   if (withRise) {

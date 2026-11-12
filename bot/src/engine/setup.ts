@@ -11,7 +11,9 @@ import {
   getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import { loadConfig } from "../config.js";
-import { RISE_MINT } from "../types.js";
+import { MAX_MINT, RISE_MINT } from "../types.js";
+import { initUserVolumeAccumulatorIx } from "./pair-venues.js";
+import { userVolumeAccumulatorPda } from "../pumpswap/pda.js";
 
 export function atasFor(user: PublicKey): { wsolAta: PublicKey; riseAta: PublicKey } {
   return {
@@ -46,6 +48,17 @@ async function main() {
   if (w && !w.owner.equals(TOKEN_PROGRAM_ID)) throw new Error("wSOL ATA not owned by Token program");
   if (r && !r.owner.equals(TOKEN_2022_PROGRAM_ID)) throw new Error("RISE ATA not owned by Token-2022 program");
   const ixs = setupInstructions(user, { createWsol: !w, createRise: !r, wrapLamports });
+  if (cfg.pairs.enabled.includes("max")) {
+    // MAX pair: MAX ATA (Token-2022) + PumpSwap user_volume_accumulator (one-time rent; the engine
+    // refuses to trade without it so that rent never lands in a trade tx)
+    const maxAta = getAssociatedTokenAddressSync(new PublicKey(MAX_MINT), user, false, TOKEN_2022_PROGRAM_ID);
+    const uva = userVolumeAccumulatorPda(user);
+    const [m, u] = await Promise.all([conn.getAccountInfo(maxAta), conn.getAccountInfo(uva)]);
+    console.log(`MAX ATA ${maxAta.toBase58()} ${m ? "exists" : "MISSING"} (Token-2022)`);
+    console.log(`PumpSwap user_volume_accumulator ${uva.toBase58()} ${u ? "exists" : "MISSING"}`);
+    if (!m) ixs.push(createAssociatedTokenAccountIdempotentInstruction(user, maxAta, user, new PublicKey(MAX_MINT), TOKEN_2022_PROGRAM_ID));
+    if (!u) ixs.push(initUserVolumeAccumulatorIx(user));
+  }
   if (ixs.length === 0) { console.log("nothing to do"); return; }
   if (BigInt(bal) < wrapLamports + 10_000_000n) throw new Error(`insufficient SOL to wrap ${wrapLamports} and keep fees/rent`);
   const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash("confirmed");

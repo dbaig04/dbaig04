@@ -30,7 +30,7 @@ async function main() {
   mkdirSync(out, { recursive: true });
   const conn = new Connection(process.env.RPC_URL ?? "https://api.mainnet-beta.solana.com", { commitment: "confirmed", fetch: keepAliveFetch() });
   for (let i = 0; i < count; i++) {
-    const { pumpswap, dlmmVenues } = maxPairSpec();
+    const { pumpswap, dlmmVenues } = maxPairSpec({ ...process.env, MAX_DLMM_POOLS: undefined, MAX_DLMM_POOL: undefined });
     let last: Map<string, AccountInfo<Buffer> | null> = new Map();
     // capture what the StateManager fetched (it refetches the whole union when a source's set grows)
     const rec = {

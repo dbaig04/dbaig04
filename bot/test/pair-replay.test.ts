@@ -14,7 +14,7 @@ const fixtures = readdirSync(DIR).filter((f) => f.endsWith(".json.gz")).map((f) 
 
 /** PumpSwap + every DLMM route whose pool is in the fixture (older fixtures hold only H6Bcgds). */
 function load(fx: Fx) {
-  const spec = maxPairSpec(MAX_DLMM_POOLS.filter((p) => fx.accounts[p]));
+  const spec = maxPairSpec({ ...process.env, MAX_DLMM_POOLS: MAX_DLMM_POOLS.filter((p) => fx.accounts[p]).join(",") });
   const v = { pumpswap: spec.pumpswap, dlmms: spec.dlmmVenues, update(slot: number, infos: Map<string, AccountInfo<Buffer> | null>) { spec.pumpswap.update(slot, infos); for (const d of spec.dlmmVenues) d.update(slot, infos); } };
   const infos = new Map<string, AccountInfo<Buffer> | null>(Object.entries(fx.accounts).map(([k, a]) => [k, a ? { owner: new PublicKey(a.owner), lamports: a.lamports, executable: a.executable, data: Buffer.from(a.data, "base64"), rentEpoch: 0 } : null]));
   for (let i = 0; i < 3; i++) v.update(fx.slot, infos);
