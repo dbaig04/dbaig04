@@ -65,12 +65,54 @@ export function pairFailures(rows: Row[]) {
   return out;
 }
 
+const pct = (xs: number[], p: number) => { if (!xs.length) return NaN; const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * (s.length - 1)))]; };
+const fmt = (x: number) => (Number.isFinite(x) ? x.toFixed(0) : "-");
+
+/**
+ * RPC catch-up and outcome summary over all simulation rows:
+ *  - catch-up wait (rpcBehindMs; 0 when the RPC was already at the snapshot slot), all sims and per stage;
+ *  - floor-clearing candidates (non-forced): passed the pre-sim, passed the final sim, rejected as "rpc behind"
+ *    (lost while waiting: the RPC never reached the slot within SIM_SLOT_WAIT_MS), failed after waiting
+ *    (the RPC caught up but the opportunity was gone), failed without waiting.
+ */
+export function simSummary(rows: Row[]): string[] {
+  const sims = rows.filter((r) => r.type === "simulation" && r.simSlot !== undefined || (r.type === "simulation" && String(r.reason ?? "").startsWith("rpc behind")));
+  const wait = (r: Row) => Number(r.rpcBehindMs ?? 0);
+  const all = sims.map(wait);
+  const waited = sims.filter((r) => wait(r) > 0).map(wait);
+  const behindRejects = sims.filter((r) => String(r.reason ?? "").startsWith("rpc behind"));
+  const cand = sims.filter((r) => !r.forced);
+  const pre = cand.filter((r) => r.stage === "pre");
+  const fin = cand.filter((r) => r.stage === "final");
+  const lostWaiting = pre.filter((r) => String(r.reason ?? "").startsWith("rpc behind"));
+  const goneAfterWait = pre.filter((r) => !r.ok && wait(r) > 0 && !String(r.reason ?? "").startsWith("rpc behind"));
+  const failNoWait = pre.filter((r) => !r.ok && wait(r) === 0 && !String(r.reason ?? "").startsWith("rpc behind"));
+  const byRoute = new Map<string, { n: number; preOk: number; finalOk: number }>();
+  for (const r of cand) {
+    const k = `${String(r.route ?? r.pair ?? "?")} ${String(r.direction ?? "?")}`;
+    const e = byRoute.get(k) ?? { n: 0, preOk: 0, finalOk: 0 };
+    if (r.stage === "pre") { e.n++; if (r.ok) e.preOk++; }
+    if (r.stage === "final" && r.ok) e.finalOk++;
+    byRoute.set(k, e);
+  }
+  return [
+    `RPC catch-up (all ${sims.length} simulations with slot data, incl. latency probes): wait median ${fmt(pct(all, 0.5))} / p95 ${fmt(pct(all, 0.95))} / max ${fmt(all.length ? Math.max(...all) : NaN)} ms; ` +
+      `${waited.length} had to wait (median ${fmt(pct(waited, 0.5))} / p95 ${fmt(pct(waited, 0.95))} ms); ${behindRejects.length} gave up after SIM_SLOT_WAIT_MS ("rpc behind").`,
+    `Floor-clearing candidates (non-forced): ${pre.length} pre-simulations -> ${pre.filter((r) => r.ok).length} passed, ` +
+      `${lostWaiting.length} lost while waiting (RPC never reached the slot), ${goneAfterWait.length} failed after waiting (RPC caught up, opportunity gone), ${failNoWait.length} failed with no wait; ` +
+      `${fin.length} final simulations -> ${fin.filter((r) => r.ok).length} passed.`,
+    ...[...byRoute.entries()].map(([k, e]) => `  ${k}: ${e.n} pre-sims, ${e.preOk} passed pre-sim, ${e.finalOk} passed final sim`),
+  ];
+}
+
 async function main() {
   const path = process.argv[2] ?? "data/shadow-vps/ledger.jsonl";
   const rows = readFileSync(path, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Row);
   const cfg = loadConfig();
   const info = rpcInfo(cfg);
   console.log(`sim-diag: ${path}; RPC ${describeRpc(info)}`);
+  for (const l of simSummary(rows)) console.log(l);
+  console.log("");
   const fails = pairFailures(rows);
   console.log(`${fails.length} floor-clearing opportunities with a failed (non-forced) simulation\n`);
   const rpc = new RateLimitedRpc({ rps: Number(process.env.RESEARCH_RPS ?? (info.isPublic ? 0.6 : 5)), url: cfg.rpcUrl });

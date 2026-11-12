@@ -419,7 +419,7 @@ export class PairEngine {
         const sim = await simulateArb(this.d.conn, simTx.tx, simPlan, { ...simBase, tipLamports: simTx.tipLamports, feeForUnits: (u: number) => { const cuLimit = cuFromSim(u, cfg.cuHeadroomBps); return { cuLimit, fee: feeFor(cuLimit) }; } });
         marks.preSimulated = performance.now();
         info.preSimMs = r1(marks.preSimulated - marks.built);
-        ledger.append("simulation", { pair: this.name, slot, stage: "pre", forced, direction: plan.direction, ...simRecord(sim), snapshotSlot: slot, simSlot: sim.slot });
+        ledger.append("simulation", { pair: this.name, slot, stage: "pre", forced, direction: plan.direction, ...simRecord(sim), snapshotSlot: slot, simSlot: sim.slot, route: plan.pair });
         if (!sim.unitsConsumed || (!sim.ok && !forced)) {
           this.log(`[${this.name} ${slot}] pre-sim rejected: ${sim.reason}`);
           info.sim = simInfo(sim);
@@ -452,7 +452,7 @@ export class PairEngine {
     info.finalSimMs = r1(marks.simulated - marks.finalBuilt);
     info.sim = simInfo(sim2);
     this.learnCu(cuKey, sim2);
-    ledger.append("simulation", { pair: this.name, slot, stage: "final", forced, direction: plan.direction, cuLimit: final.cuLimit, cuPrice: final.cuPriceMicroLamports, fee: final.feeLamports, txVersion: final.version, txSize: final.size, ...simRecord(sim2), snapshotSlot: slot, simSlot: sim2.slot, latency: latencyRecord(slot, info.stateSource, sim2.ok ? "simulated" : "sim-rejected", marks, trigger) });
+    ledger.append("simulation", { pair: this.name, slot, stage: "final", forced, direction: plan.direction, cuLimit: final.cuLimit, cuPrice: final.cuPriceMicroLamports, fee: final.feeLamports, txVersion: final.version, txSize: final.size, ...simRecord(sim2), snapshotSlot: slot, simSlot: sim2.slot, route: plan.pair, latency: latencyRecord(slot, info.stateSource, sim2.ok ? "simulated" : "sim-rejected", marks, trigger) });
     if (!sim2.ok) {
       this.log(`[${this.name} ${slot}] final sim rejected${forced ? " (forced, sub-floor)" : ""}: ${sim2.reason}`);
       return { status: "sim-rejected", slot, plan, sim: sim2, opt: res };
