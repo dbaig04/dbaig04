@@ -143,6 +143,8 @@ export interface PairsConfig {
   lookupTables: string[];
   /** Simulate mode only: sub-floor latency probe sims every N ms (PAIR_FORCE_SIM_MS, 0 = off). */
   forceSimMs: number;
+  /** MAX routes: DLMM pools traded against the PumpSwap pool (MAX_DLMM_POOLS; empty = the built-in three). */
+  maxDlmmPools: string[];
 }
 
 export interface Config {
@@ -317,6 +319,7 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
         simUser: env("PAIR_SIM_USER") ? new PublicKey(env("PAIR_SIM_USER")!) : undefined,
         lookupTables: (env("PAIR_LOOKUP_TABLES") ?? "").split(",").map((x) => x.trim()).filter(Boolean).map((x) => new PublicKey(x).toBase58()),
         forceSimMs: mode === "simulate" ? num("PAIR_FORCE_SIM_MS", 0) : 0,
+        maxDlmmPools: (env("MAX_DLMM_POOLS") ?? "").split(",").map((x) => x.trim()).filter(Boolean).map((x) => new PublicKey(x).toBase58()),
       },
     };
   } finally {

@@ -211,3 +211,38 @@ and exact-out alike; `update()` ~120 µs (bin arrays cached by raw bytes).
 * Limit-order liquidity and Token-2022 transfer fees (not present on this pool).
 * Bitmap extension (not needed: min/max bin ±3516 → array indices ±51 ⊂ internal ±512 range).
 * Engine must model the RISE ATA / wSOL ATA existence and wrapping itself.
+
+## Generalization (any DLMM pool) and MAX/SOL pools — 2026-11-12
+
+* `new MeteoraDlmm({ pool, mintX?, mintY? })`: default is still the RISE pool (RISE/wSOL checked);
+  other pools learn X/Y from the lb_pair (checked when given). `accounts()` = lb_pair, Clock, both mints,
+  bin arrays. Token program per side comes from the **mint account owner** (falls back to the lb_pair
+  program flag when the mint is not in the snapshot; a disagreement throws). ATAs, `token_x/y_program`
+  and the host account are derived from those. `binArrayPda` is cached per lb_pair object.
+* `venue.ts` `DlmmSwapVenue implements SwapVenue` (`buy` = SOL→token, `sell` = token→SOL, token on X
+  or Y via `tokenSide`). `netIn` = input minus the host rebate when the fee is on the input; on OnlyY
+  pools a sell's fee is in wSOL (the output), the rebate lands in the output account and is **added to
+  `out`**; `swapExactInIxs` subtracts it from minOut for the program's `min_amount_out` (the program
+  checks the output excluding the rebate). Verified on Gt5wsV / H6Bcgd sells.
+* Validation script `validate-max.ts` (per pool, `--pool`), logs `fixtures/meteora/validate-max-<pool>-output.txt`,
+  per-pool table in `src/pumpswap/NOTES.md`.
+
+Two more deviations from the SDK / earlier code, forced by simulation on 5nwdWt:
+
+3. **Limit orders exist in version-2 bin arrays.** The code used limit-order liquidity only for
+   version ≥ 3 arrays; 5nwdWt has version-2 arrays with open bid orders (e.g. 0.01 SOL at bin −432,
+   a ladder at −517…−543) and ask orders (−351…−390). A 900k-MAX sell through bin −432 was off by
+   158,100 lamports (the program filled the 10,000,000-lamport order). Now gated on the pair only
+   (`function_type` 2 = LimitOrder, or reward-mint rule), as the SDK does.
+4. **Host fee on limit-order fills.** The protocol fee follows the SDK split (limit-order part: 50% to the
+   order owners, the rest to the protocol), but the 20% host fee is taken per bin as
+   `floor(floor(mmFee·share/1e4)·0.2) + floor(floor(loFee·share/1e4)·0.2)` — not from the protocol's
+   limit-order extra. With that, buys up to 300 SOL through 141 bins (≈33 bins with ask orders) and
+   sells through the bid order match amount_in/out, fee, protocol_fee and host_fee exactly.
+   `applySwap()` still refuses (returns false) when limit-order liquidity is consumed (bookkeeping not
+   modelled).
+
+The RISE pool has no limit orders (all LO fields zero), so RISE quotes are unchanged (tests pass).
+Validation hygiene: the public RPC is load-balanced; a simulation served by a node *behind* the
+snapshot slot can run on older state that the pre/post byte-equality check does not catch, so cases are
+also required to have `pre.slot ≤ sim.slot ≤ post.slot`.

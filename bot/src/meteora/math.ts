@@ -127,9 +127,15 @@ export interface BinSwapResult {
   amountOut: bigint; // fee-exclusive output delivered
   fee: bigint; // total trading fee
   protocolFee: bigint; // protocol share (before host split)
+  /** host share (paid to host_fee_in if passed): floor(20% of the plain protocol share), computed
+   *  separately for the market-making and the limit-order part of the bin's fee */
+  hostFee: bigint;
   /** output actually leaving the bin's liquidity (exact-out can round a little above amountOut) */
   binOut?: bigint;
 }
+
+/** Host-fee base of one bin (see swapExactInAtBin). Replaceable for diagnostics only. */
+const hostOf = (protocol: bigint) => (protocol * HOST_FEE_BPS) / BASIS_POINT_MAX;
 
 /** swapExactInQuoteAtBin */
 export function swapExactInAtBin(b: BinView, rate: bigint, protocolShare: bigint, inAmount: bigint, swapForY: boolean, feeOnInput: boolean): BinSwapResult {
@@ -174,17 +180,22 @@ export function swapExactInAtBin(b: BinView, rate: bigint, protocolShare: bigint
     tradingFee = r.fee;
     exclOut = r.excluded;
   }
-  // splitFee
+  // Fee split (SDK 1.9.14 splitFee): limit-order fills keep LIMIT_ORDER_FEE_SHARE of their fee share
+  // for the order owners and give the rest to the protocol. The host fee (20%) is NOT taken from that
+  // limit-order extra: per bin, host = floor(floor(mmFee*share/1e4)*20%) + floor(floor(loFee*share/1e4)*20%)
+  // (evidence: simulated Swap events on 5nwdWt bins with open limit orders, see NOTES.md).
   let protocolFee = 0n;
+  let hostFee = 0n;
   if (totalIn > 0n) {
     const mmFee = ceilDiv(tradingFee * mmFill.amountIn, totalIn);
     const totalLoFee = tradingFee - mmFee;
     const loFee = (totalLoFee * LIMIT_ORDER_FEE_SHARE) / BASIS_POINT_MAX;
     protocolFee = totalLoFee - loFee + (mmFee * protocolShare) / BASIS_POINT_MAX;
+    hostFee = hostOf((mmFee * protocolShare) / BASIS_POINT_MAX) + hostOf((totalLoFee * protocolShare) / BASIS_POINT_MAX);
   } else {
     tradingFee = 0n;
   }
-  return { amountIn: inclIn, amountOut: exclOut, fee: tradingFee, protocolFee };
+  return { amountIn: inclIn, amountOut: exclOut, fee: tradingFee, protocolFee, hostFee };
 }
 
 /** swapExactOutQuoteAtBin */
@@ -206,7 +217,7 @@ export function swapExactOutAtBin(b: BinView, rate: bigint, protocolShare: bigin
   const r = swapExactInAtBin(b, rate, protocolShare, inclIn, swapForY, feeOnInput);
   // NOTE: the SDK adds (quotedOut - outAmount) to protocolFee here (mixing output-token units into an
   // input-token fee). The program does not: simulated host fees match only without it.
-  return { amountIn: r.amountIn, amountOut: outAmount, fee: r.fee, protocolFee: r.protocolFee, binOut: r.amountOut };
+  return { amountIn: r.amountIn, amountOut: outAmount, fee: r.fee, protocolFee: r.protocolFee, hostFee: r.hostFee, binOut: r.amountOut };
 }
 
 // ---- Token-2022 transfer fee (epoch-dependent) ----

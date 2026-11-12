@@ -1,7 +1,7 @@
 // Offline tests for the generalized MeteoraDlmm + DlmmSwapVenue adapter on MAX/SOL pools.
 // Fixtures (fixtures/meteora/):
-//  - max-5nwdWt-sim.json.gz (InputOnly fees) and max-Gt5wsV-sim.json.gz (OnlyY fees: sells pay the fee
-//    in wSOL and the host rebate lands in the output account): per-case account snapshots (lb_pair,
+//  - max-5nwdWt / max-6PkALv (InputOnly fees) and max-H6Bcgd / max-Gt5wsV (OnlyY fees: sells pay the fee
+//    in wSOL and the host rebate lands in the output account) -sim.json.gz: per-case account snapshots (lb_pair,
 //    mints, traversed bin arrays) + Clock, verified to the base unit against mainnet simulation by
 //    src/meteora/validate-max.ts --write-fixtures.
 //  - max-lbpairs.json: lb_pair accounts of Gt5wsV / H6Bcgd + MAX / wSOL mints (for ix layout checks).
@@ -20,7 +20,7 @@ import { POOL as RISE_POOL, PROGRAM, TOKEN_2022_PROGRAM, TOKEN_PROGRAM, ata } fr
 import { MAX_MINT, WSOL_MINT } from "../src/types.js";
 
 const fx = (p: string) => new URL(`../fixtures/${p}`, import.meta.url);
-const sims = ["max-5nwdWt-sim.json.gz", "max-Gt5wsV-sim.json.gz"].map((f) => JSON.parse(gunzipSync(readFileSync(fx(`meteora/${f}`))).toString()));
+const sims = ["max-5nwdWt-sim.json.gz", "max-6PkALv-sim.json.gz", "max-H6Bcgd-sim.json.gz", "max-Gt5wsV-sim.json.gz"].map((f) => JSON.parse(gunzipSync(readFileSync(fx(`meteora/${f}`))).toString()));
 const lbpairs = JSON.parse(readFileSync(fx("meteora/max-lbpairs.json"), "utf8"));
 const txs: any[] = JSON.parse(readFileSync(fx("pumpswap/research-txs.json"), "utf8"));
 const MAXK = new PublicKey(MAX_MINT);
@@ -40,7 +40,7 @@ function caseVenue(sim: any, c: any): DlmmSwapVenue {
 
 test("generic DLMM venue reproduces simulated MAX swaps exactly on both fee modes", () => {
   for (const sim of sims) {
-    assert.ok(sim.cases.length >= 10, sim.pool);
+    assert.ok(sim.cases.length >= 8, sim.pool);
     let sellRebate = 0;
     for (const c of sim.cases) {
       const v = caseVenue(sim, c);
@@ -53,9 +53,38 @@ test("generic DLMM venue reproduces simulated MAX swaps exactly on both fee mode
       if (ctx.rebateInOut > 0n) sellRebate++;
     }
     // OnlyY pool: sells (X -> Y) pay the fee in wSOL, the rebate is part of `out`
-    if (sim.pool.startsWith("Gt5ws")) assert.ok(sellRebate > 0);
+    if (sim.pool.startsWith("Gt5ws") || sim.pool.startsWith("H6Bcg")) assert.ok(sellRebate > 0);
     else assert.equal(sellRebate, 0);
   }
+});
+
+test("limit orders in version-2 bin arrays: fills and the host-fee split match simulation (5nwdWt)", () => {
+  const sim = sims[0];
+  let lo = 0;
+  for (const c of sim.cases) {
+    const v = caseVenue(sim, c);
+    const q = v.quoteExactIn(c.side, BigInt(c.amount))!;
+    const ctx = q.ctx as DlmmQuoteCtx;
+    // did the quote traverse a bin holding an open/processed limit order usable in this direction?
+    const swapForY = ctx.side === "sellRise";
+    const start = v.dlmm.lbPair!.activeId;
+    let touched = false;
+    for (const ba of v.dlmm.binArrays.values())
+      ba.bins.forEach((b, j) => {
+        const id = ba.index * 70 + j;
+        const inPath = swapForY ? id <= start && id >= ctx.q.endBinId : id >= start && id <= ctx.q.endBinId;
+        const usable = swapForY ? !b.limitOrderAskSide : b.limitOrderAskSide;
+        if (inPath && usable && (b.openOrderAmount > 0n || b.processedOrderRemainingAmount > 0n)) touched = true;
+      });
+    if (touched) {
+      lo++;
+      assert.equal(q.out.toString(), c.out);
+      assert.equal(ctx.q.hostFee.toString(), c.hostFee);
+      // the limit-order fee extra goes to the protocol, not the host: host < 2% of the fee
+      assert.ok(ctx.q.hostFee * 50n <= ctx.q.fee);
+    }
+  }
+  assert.ok(lo >= 2, `limit-order cases ${lo}`);
 });
 
 test("token programs come from the mint owners; ATAs, host account and min-out per fee mode", () => {

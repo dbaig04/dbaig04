@@ -7,7 +7,7 @@ import { gzipSync } from "node:zlib";
 import { Connection, type AccountInfo, type PublicKey } from "@solana/web3.js";
 import { keepAliveFetch } from "../feeds/http.js";
 import { StateManager } from "../engine/state.js";
-import { createMaxVenues } from "../engine/pair-venues.js";
+import { maxPairSpec } from "../engine/pair-venues.js";
 
 export interface PairFixture {
   pair: string;
@@ -30,7 +30,7 @@ async function main() {
   mkdirSync(out, { recursive: true });
   const conn = new Connection(process.env.RPC_URL ?? "https://api.mainnet-beta.solana.com", { commitment: "confirmed", fetch: keepAliveFetch() });
   for (let i = 0; i < count; i++) {
-    const { pumpswap, dlmm } = createMaxVenues();
+    const { pumpswap, dlmmVenues } = maxPairSpec();
     let last: Map<string, AccountInfo<Buffer> | null> = new Map();
     // capture what the StateManager fetched (it refetches the whole union when a source's set grows)
     const rec = {
@@ -41,15 +41,15 @@ async function main() {
         return r;
       },
     };
-    const sm = new StateManager(rec as never, [pumpswap, dlmm], "confirmed");
+    const sm = new StateManager(rec as never, [pumpswap, ...dlmmVenues], "confirmed");
     last = new Map();
     const { slot } = await sm.refresh();
-    if (!pumpswap.ready() || !dlmm.ready()) throw new Error("venues not ready after refresh");
+    if (!pumpswap.ready() || dlmmVenues.some((d) => !d.ready())) throw new Error("venues not ready after refresh");
     const wanted = new Set(sm.wantedAccounts().map((k) => k.toBase58()));
     const accounts = new Map([...last].filter(([k]) => wanted.has(k)));
     const fx: PairFixture = { pair: "max", slot, recordedAt: new Date().toISOString(), accounts: encodeInfos(accounts) };
     const gz = gzipSync(Buffer.from(JSON.stringify(fx)), { level: 9 });
-    const f = join(out, `max-${slot}.json.gz`);
+    const f = join(out, `max3-${slot}.json.gz`);
     writeFileSync(f, gz);
     console.log(`${f}: ${accounts.size} accounts, ${gz.length} bytes gz; pumpswap price ${pumpswap.spotPrice().toExponential(4)} lamports/unit`);
     if (i + 1 < count) await new Promise((r) => setTimeout(r, gap));

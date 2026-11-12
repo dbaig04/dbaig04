@@ -25,6 +25,7 @@ import { SYSVAR_CLOCK } from "../meteora/pda.js";
 import { PumpSwapPool, PumpSwapQuoteCtx } from "./index.js";
 import { decodePool, tokenAmount } from "./layout.js";
 import { pumpEventsFromLogs } from "./events.js";
+import { selectedMaxDlmmPools } from "./pools.js";
 import type { SwapQuote, SwapSide } from "../types.js";
 
 const POOL = "Eoe22HdCa9rhtBwKL6nNZmZxfuzF35xkxobcvfaF1vWQ";
@@ -32,7 +33,8 @@ const arg = (k: string) => {
   const i = process.argv.indexOf(k);
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
-const DLMM_POOL = arg("--dlmm") ?? "5nwdWtMHvrcUPJpoXSYWcPQv9wkoNzhCME5XJ4KmktzJ";
+// round-trip DLMM pools: --dlmm a,b (aliases or addresses), else MAX_DLMM_POOLS / all validated pools
+const DLMM_POOLS = arg("--dlmm") ? selectedMaxDlmmPools({ MAX_DLMM_POOLS: arg("--dlmm") }) : selectedMaxDlmmPools();
 // research wallet: ~410 SOL in its wSOL ATA, MAX ATA exists, user_volume_accumulator exists
 const BUYER = new PublicKey(process.env.BUY_USER ?? "8pY1AukbuPgUE3EetyLa59rFLMimJGT94ZzbMEZcQF4w");
 // a plain wallet holding ~3.7M MAX (no wSOL ATA, no volume accumulator)
@@ -172,7 +174,8 @@ async function roundTrip(dir: "pump->dlmm" | "dlmm->pump", dlmm: DlmmSwapVenue, 
     const sim = await simulateIxs(user, ixs, [u.quote, u.base, SYSVAR_CLOCK]);
     const post = await snapshotFor([], [...venue.accounts(), ...dlmm.accounts().filter((k) => !k.equals(SYSVAR_CLOCK))]);
     const dlmmKeys = dlmm.accounts().filter((k) => !k.equals(SYSVAR_CLOCK));
-    const dlmmStable = sameData(pre, post, dlmmKeys);
+    // load-balanced public RPC: the sim must run inside the snapshot window (else it may see older state)
+    const dlmmStable = sameData(pre, post, dlmmKeys) && sim.slot >= pre.slot && post.slot >= sim.slot;
     if (!dlmmStable) {
       console.error(`  ${dir}: DLMM state changed during sim window, retry`);
       continue;
@@ -193,7 +196,8 @@ async function roundTrip(dir: "pump->dlmm" | "dlmm->pump", dlmm: DlmmSwapVenue, 
     const VA = dir === "pump->dlmm" ? pump : dlmm;
     const VB = dir === "pump->dlmm" ? dlmm : pump;
     const ra = VA.quoteExactIn("buy", solIn)!;
-    const rb = VB.quoteExactIn("sell", ra.out)!;
+    // leg B's ix sells exactly qa.out (fixed when the tx was built), whatever leg A really delivered
+    const rb = VB.quoteExactIn("sell", qa.out)!;
     dlmm.dlmm.clock = saved;
     const dW = tokenAmount(sim.accounts[0]!) - tokenAmount(pre.infos.get(u.quote.toBase58())!.data);
     const dM = tokenAmount(sim.accounts[1]!) - tokenAmount(pre.infos.get(u.base.toBase58())!.data);
@@ -295,8 +299,11 @@ async function main() {
   }
   if (!process.argv.includes("--no-samepool") && !only) for (const k of ["buy+buy", "buy+sell"] as const) for (const a of [100_000_000n, 2n * SOL]) log(await samePool(k, a));
   if (!process.argv.includes("--no-roundtrip")) {
-    const dlmm = new DlmmSwapVenue({ pool: DLMM_POOL, tokenMint: MAX_MINT });
-    for (const dir of ["pump->dlmm", "dlmm->pump"] as const) for (const s of [10_000_000n, 100_000_000n, SOL]) log(await roundTrip(dir, dlmm, s));
+    for (const pool of DLMM_POOLS) {
+      const dlmm = new DlmmSwapVenue({ pool, tokenMint: MAX_MINT });
+      for (const dir of ["pump->dlmm", "dlmm->pump"] as const)
+        for (const s of [10_000_000n, 100_000_000n, 500_000_000n, SOL]) log({ ...(await roundTrip(dir, dlmm, s)), dir: `${dir} ${pool.slice(0, 6)}` });
+    }
   }
   // latency over the cached snapshot
   const N = 20000;

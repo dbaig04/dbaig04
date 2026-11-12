@@ -161,7 +161,12 @@ test("quotes reproduce every simulated case exactly (out, netIn, fee split, buyb
   }
   // the fee-split shave case (net + fees < budget): the program debits budget - 1
   const shave = snap.cases.filter((c: any) => c.side === "buy" && c.netIn !== c.amount);
-  assert.ok(shave.length >= 1 && shave.every((c: any) => BigInt(c.amount) - BigInt(c.netIn) === 1n));
+  assert.ok(shave.every((c: any) => BigInt(c.amount) - BigInt(c.netIn) === 1n));
+  // which budgets shave depends on the fee tier at capture time; at 20/5/50 bps a budget of 1,001,456
+  // debited 1,001,455 in simulation (slot 468.417M, see NOTES.md)
+  const f = { lpFeeBps: 20n, protocolFeeBps: 5n, creatorFeeBps: 50n };
+  assert.equal(buyExactQuoteIn(1_001_456n, 39_309_559_063_903n, 1_266_256_396_769n, f, 5000n, false)!.debit, 1_001_455n);
+  assert.equal(buyExactQuoteIn(100_000_421n, 39_309_559_063_903n, 1_266_256_396_769n, f, 5000n, false)!.debit, 100_000_420n);
 });
 
 test("research-wallet txs: event amounts re-derived from the event's pre-trade state, fee tier from market cap", () => {
@@ -359,4 +364,16 @@ test("quoteKey changes with state; accounts() grows after the first update; late
   for (let i = 0; i < N; i++) v.quoteExactIn(i & 1 ? "buy" : "sell", 1_000_000n + BigInt(i) * 997n);
   const us = Number(process.hrtime.bigint() - t0) / N / 1000;
   assert.ok(us < 50, `${us} us/quote`);
+});
+
+test("pool selection by config (MAX_DLMM_POOLS / MAX_DLMM_POOL / MAX_PUMPSWAP_POOL)", async () => {
+  const { selectedMaxDlmmPools, selectedMaxPumpSwapPool, createSelectedMaxVenues, MAX_DLMM_POOLS } = await import("../src/pumpswap/pools.js");
+  assert.deepEqual(selectedMaxDlmmPools({}), MAX_DLMM_POOLS.map((p) => p.address));
+  assert.deepEqual(selectedMaxDlmmPools({ MAX_DLMM_POOLS: "6PkALv, H6Bcgd" }), ["6PkALvWhf2PJ3VwPsezFJdmvQ684REGkr7vLBihkNkH", "H6Bcgdsxbpv5KjjyydddZPECg1BXe53uHnQSSkfiyKQ"]);
+  assert.deepEqual(selectedMaxDlmmPools({ MAX_DLMM_POOL: "5nwdWtMHvrcUPJpoXSYWcPQv9wkoNzhCME5XJ4KmktzJ" }), ["5nwdWtMHvrcUPJpoXSYWcPQv9wkoNzhCME5XJ4KmktzJ"]);
+  assert.throws(() => selectedMaxDlmmPools({ MAX_DLMM_POOLS: "nope" }), /unknown/);
+  assert.equal(selectedMaxPumpSwapPool({}), POOL);
+  const v = createSelectedMaxVenues({ MAX_DLMM_POOLS: "5nwdWt,6PkALv" });
+  assert.equal(v.dlmm.length, 2);
+  assert.equal(v.pumpswap.name, `pumpswap:${POOL}`);
 });

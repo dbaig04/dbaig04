@@ -28,6 +28,8 @@ export interface CompetitorArb {
   otherLegs: number;
   nonce: boolean;
   fetchedAt: number;
+  /** Route (DLMM pool) the arb went through, e.g. "max:H6Bcgd". */
+  route?: string;
 }
 
 /** Classify a tx as a MAX round trip through both pools (or null). */
@@ -48,34 +50,50 @@ export function maxArbOf(a: TxAnalysis, pumpPool: string, dlmmPool: string): Omi
   };
 }
 
+/** First DLMM pool of `dlmmPools` that, with the PumpSwap pool, forms a round trip in `a`. */
+export function maxArbAnyRoute(a: TxAnalysis, pumpPool: string, dlmmPools: readonly string[]): (Omit<CompetitorArb, "fetchedAt"> & { route: string }) | null {
+  for (const d of dlmmPools) {
+    const r = maxArbOf(a, pumpPool, d);
+    if (r && r.direction !== "mixed") return { ...r, route: `max:${d.slice(0, 6)}` };
+  }
+  return null;
+}
+
 export class CompetitorWatcher {
-  private last: string | undefined;
+  private last = new Map<string, string>();
+  private done = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private busy = false;
   readonly arbs: CompetitorArb[] = [];
   seen = 0;
-  constructor(private rpc: RateLimitedRpc, private o: { watch: string; pumpPool: string; dlmmPool: string; txDir: string; outPath: string; tips?: Set<string>; log?: (m: string) => void; intervalMs?: number }) {
+  constructor(private rpc: RateLimitedRpc, private o: { watch: string[]; pumpPool: string; dlmmPools: readonly string[]; txDir: string; outPath: string; tips?: Set<string>; log?: (m: string) => void; intervalMs?: number }) {
     mkdirSync(dirname(o.outPath), { recursive: true });
   }
   async poll(): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     try {
-      const sigs: SigInfo[] = await signaturesFor(this.rpc, this.o.watch, { max: this.last ? 1000 : 1, until: this.last });
-      if (!sigs.length) return;
-      if (!this.last) { this.last = sigs[0].signature; return; } // start point: only txs after the run started
-      this.last = sigs[0].signature;
-      for (const s of sigs.reverse()) {
+      const fresh: SigInfo[] = [];
+      for (const w of this.o.watch) {
+        const last = this.last.get(w);
+        const sigs: SigInfo[] = await signaturesFor(this.rpc, w, { max: last ? 1000 : 1, until: last });
+        if (!sigs.length) continue;
+        this.last.set(w, sigs[0].signature);
+        if (!last) continue; // start point: only txs after the run started
+        for (const x of sigs) if (!this.done.has(x.signature)) { this.done.add(x.signature); fresh.push(x); }
+      }
+      fresh.sort((x, y) => x.slot - y.slot);
+      for (const s of fresh) {
         this.seen++;
         const t = (await getTxCached(this.rpc, s.signature, this.o.txDir)) as RawTxV1 | null;
         if (!t?.meta) continue;
         const a = analyzeTx(t, { jitoTipAccounts: this.o.tips });
-        const arb = maxArbOf(a, this.o.pumpPool, this.o.dlmmPool);
-        if (!arb || arb.direction === "mixed") continue; // both pools traded the same way: a routed swap, not an arb
+        const arb = maxArbAnyRoute(a, this.o.pumpPool, this.o.dlmmPools); // "mixed" (same way on both pools) = routed swap, not an arb
+        if (!arb) continue;
         const rec = { ...arb, fetchedAt: Date.now() };
         this.arbs.push(rec);
         appendFileSync(this.o.outPath, JSON.stringify(rec) + "\n");
-        this.o.log?.(`competitor arb ${rec.direction} slot ${rec.slot} by ${rec.feePayer.slice(0, 8)} net ${rec.walletSolNet} ok=${rec.success}`);
+        this.o.log?.(`competitor arb ${rec.route} ${rec.direction} slot ${rec.slot} by ${rec.feePayer.slice(0, 8)} net ${rec.walletSolNet} ok=${rec.success}`);
       }
     } catch (e) {
       this.o.log?.(`competitor poll failed: ${(e as Error).message}`);

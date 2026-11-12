@@ -61,7 +61,7 @@ async function createPairEngines(cfg: Config, conn: Connection, d: { ledger: Led
   }
   for (const name of cfg.pairs.enabled) {
     if (name !== "max") continue;
-    const spec = maxPairSpec();
+    const spec = cfg.pairs.maxDlmmPools.length ? maxPairSpec(cfg.pairs.maxDlmmPools) : maxPairSpec();
     // without a keypair (simulate), simulate as a wallet that holds wSOL + MAX ATAs
     const user = cfg.keypair ? cfg.keypair.publicKey : cfg.pairs.simUser ?? new PublicKey(MAX_SIM_USER);
     out.push(new PairEngine({
@@ -93,7 +93,7 @@ async function main() {
 
   const withRise = cfg.pairs.enabled.includes("rise");
   // optional ERPC infra: Geyser gRPC state, ShredStream hints, SEND_RPC_URL (SWQoS) delivery
-  const infra = setupInfra(cfg, conn, console.log, { onShredsUdpSummary: (s) => ledger.append("latency", s), pairWatch: cfg.pairs.enabled.includes("max") ? [maxShredWatch()] : [] });
+  const infra = setupInfra(cfg, conn, console.log, { onShredsUdpSummary: (s) => ledger.append("latency", s), pairWatch: cfg.pairs.enabled.includes("max") ? [cfg.pairs.maxDlmmPools.length ? maxShredWatch(cfg.pairs.maxDlmmPools) : maxShredWatch()] : [] });
   const delivery = makeDelivery(cfg, conn, infra.sendConn);
   let engine: ArbEngine | null = null;
   if (withRise) {
@@ -106,7 +106,7 @@ async function main() {
   // Program-upgrade guard: programdata deploy slot (45-byte dataSlice) every UPGRADE_CHECK_MS of RISE +
   // Meteora DLMM (RISE engine) and every upgradeable program a pair venue uses (PumpSwap, DLMM).
   const base = withRise ? WATCHED_PROGRAMS : [];
-  const extra = await watchedProgramsFor(conn, pairEngines.flatMap((e) => [e.venues.a, e.venues.b]).flatMap((v) => v.programIds().map((p) => ({ name: v.name.split(":")[0], programId: p.toBase58() }))), base);
+  const extra = await watchedProgramsFor(conn, pairEngines.flatMap((e) => e.allVenues()).flatMap((v) => v.programIds().map((p) => ({ name: v.name.split(":")[0], programId: p.toBase58() }))), base);
   for (const x of extra.immutable) console.log(`program ${x}: not upgradeable, not watched`);
   const upgrades = new ProgramUpgradeGuard(conn, risk, [...base, ...extra.watch], { intervalMs: cfg.risk.upgradeCheckMs, log: console.log });
   const programs = await upgrades.init();
@@ -136,7 +136,7 @@ async function main() {
   infra.start();
   console.log(`mode=${cfg.mode} pairs=${cfg.pairs.enabled.join(",")} user=${cfg.user.toBase58()}${cfg.keypair ? "" : " (no keypair: read-only simulation)"} delivery=${delivery.describe}`);
   if (engine) console.log(`wSOL ATA ${engine.wsolAta.toBase58()}  RISE ATA ${engine.riseAta.toBase58()}`);
-  for (const p of pairEngines) console.log(`pair ${p.name}: ${p.venues.a.name} <-> ${p.venues.b.name}; user ${p.user.toBase58()} wSOL ATA ${p.wsolAta.toBase58()} token ATA ${p.tokenAta.toBase58()}`);
+  for (const p of pairEngines) console.log(`pair ${p.name}: routes ${p.routes.map((r) => `${r.name} (${r.a.name} <-> ${r.b.name})`).join(", ")}; user ${p.user.toBase58()} wSOL ATA ${p.wsolAta.toBase58()} token ATA ${p.tokenAta.toBase58()}`);
   console.log(`infra: ${Object.entries(infra.describe()).map(([k, v]) => `${k}=${v}`).join("  ")}`);
   console.log(`risk: ${Object.entries(describeConfig(cfg)).filter(([k]) => k.startsWith("risk.")).map(([k, v]) => `${k.slice(5)}=${v}`).join(" ")}`);
   ledger.append("start", { config: describeConfig(cfg), infra: infra.describe(), delivery: delivery.describe, programs, risk: risk.snapshot() });

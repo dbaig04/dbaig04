@@ -1,0 +1,64 @@
+{"slot":468426336,"baseReserve":"35085369322216","quoteVault":"1407590479065","virtual":"16401597817","buckets":{"protocol":"106956967","creator":"1076741808"},"supply":"997470810645698","fees":{"lpFeeBps":"20","protocolFeeBps":"5","creatorFeeBps":"40"},"spot":0.04058649244374151,"buybackAta":"HjQjngTDqoHE6aaGhUqfz9aQ7WZcBRjy5xB8PScLSr8i","baseTokenProgram":"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb","mintExt":[18,19]}
+{"dir":"pump->dlmm 5nwdWt","solIn":"10000000","slot":468426342,"pumpStable":false,"legA_out":"243233442","legB_out":"9524053","quoteDwsol":"-475947","simDwsol":"-475947","quoteDmax":"111191","simDmax":"111191","dlmmEvent":{"in":"243223431","out":"9524053","host":"101180","bins":"-404->-404"},"match":true,"cu":98866}
+  pump->dlmm: DLMM state changed during sim window, retry
+{"dir":"pump->dlmm 5nwdWt","solIn":"100000000","slot":468426353,"pumpStable":true,"legA_out":"2436107696","legB_out":"95392211","quoteDwsol":"-4607789","simDwsol":"-4607789","quoteDmax":"1013420","simDmax":"1013420","dlmmEvent":{"in":"2436107696","out":"95392211","host":"1013420","bins":"-404->-404"},"match":true,"cu":98876}
+{"dir":"pump->dlmm 5nwdWt","solIn":"500000000","slot":468426358,"pumpStable":false,"legA_out":"12187501841","legB_out":"476828319","quoteDwsol":"-23171681","simDwsol":"-23171681","quoteDmax":"15418861","simDmax":"15418861","dlmmEvent":{"in":"12177148673","out":"476828319","host":"5065693","bins":"-404->-404"},"match":true,"cu":98985}
+{"dir":"pump->dlmm 5nwdWt","solIn":"1000000000","slot":468426364,"pumpStable":true,"legA_out":"24366522984","legB_out":"954135366","quoteDwsol":"-45864634","simDwsol":"-45864634","quoteDmax":"10136473","simDmax":"10136473","dlmmEvent":{"in":"24366522984","out":"954135366","host":"10136473","bins":"-404->-404"},"match":true,"cu":98985}
+  dlmm->pump: DLMM state changed during sim window, retry
+{"dir":"dlmm->pump 5nwdWt","solIn":"10000000","slot":468426381,"pumpStable":false,"legA_out":"242921438","legB_out":"9622860","quoteDwsol":"-372980","simDwsol":"-372980","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"10000000","out":"242921438","host":"4160","bins":"-403->-403"},"match":true,"cu":92443}
+  dlmm->pump: sim err {"InstructionError":[2,{"Custom":6004}]} with pump state moving, retry
+{"dir":"dlmm->pump 5nwdWt","solIn":"100000000","slot":468426392,"pumpStable":false,"legA_out":"2429214389","legB_out":"96041932","quoteDwsol":"-3916468","simDwsol":"-3916468","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"100000000","out":"2429214389","host":"41600","bins":"-403->-403"},"match":true,"cu":92442}
+{"dir":"dlmm->pump 5nwdWt","solIn":"500000000","slot":468426398,"pumpStable":false,"legA_out":"12146071945","legB_out":"480241678","quoteDwsol":"-19550322","simDwsol":"-19550322","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"500000000","out":"12146071945","host":"208000","bins":"-403->-403"},"match":true,"cu":92442}
+{"dir":"dlmm->pump 5nwdWt","solIn":"1000000000","slot":468426404,"pumpStable":false,"legA_out":"24292143890","legB_out":"957347049","quoteDwsol":"-42236951","simDwsol":"-42236951","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"1000000000","out":"24292143890","host":"416000","bins":"-403->-403"},"match":true,"cu":92445}
+{"dir":"pump->dlmm 6PkALv","solIn":"10000000","slot":468426412,"pumpStable":true,"legA_out":"250600810","legB_out":"9341297","quoteDwsol":"-658703","simDwsol":"-658703","quoteDmax":"299366","simDmax":"299366","dlmmEvent":{"in":"250600810","out":"9341297","host":"299366","bins":"-163->-163"},"match":true,"cu":98858}
+{"dir":"pump->dlmm 6PkALv","solIn":"100000000","slot":468426417,"pumpStable":false,"legA_out":"2491272361","legB_out":"92794506","quoteDwsol":"-7205494","simDwsol":"-7205494","quoteDmax":"4829840","simDmax":"4829840","dlmmEvent":{"in":"2489416362","out":"92794506","host":"2973841","bins":"-163->-163"},"match":true,"cu":98878}
+  pump->dlmm: sim err {"InstructionError":[1,{"Custom":6040}]} with pump state moving, retry
+{"dir":"pump->dlmm 6PkALv","solIn":"500000000","slot":468426429,"pumpStable":false,"legA_out":"12665251398","legB_out":"472086296","quoteDwsol":"-27913704","simDwsol":"-27913704","quoteDmax":"15629296","simDmax":"15629296","dlmmEvent":{"in":"12664751334","out":"472086296","host":"15129232","bins":"-163->-163"},"match":true,"cu":99005}
+{"dir":"pump->dlmm 6PkALv","solIn":"1000000000","slot":468426440,"pumpStable":true,"legA_out":"25324107770","legB_out":"940266988","quoteDwsol":"-59733012","simDwsol":"-59733012","quoteDmax":"29008288","simDmax":"29008288","dlmmEvent":{"in":"25324107770","out":"940266988","host":"29008288","bins":"-163->-164"},"match":true,"cu":104925}
+  dlmm->pump: sim err {"InstructionError":[2,{"Custom":6004}]} with pump state moving, retry
+{"dir":"dlmm->pump 6PkALv","solIn":"10000000","slot":468426451,"pumpStable":false,"legA_out":"230546231","legB_out":"8972362","quoteDwsol":"-1014088","simDwsol":"-1014088","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"10000000","out":"230546231","host":"13550","bins":"-163->-162"},"match":true,"cu":92717}
+{"dir":"dlmm->pump 6PkALv","solIn":"100000000","slot":468426457,"pumpStable":true,"legA_out":"2305462341","legB_out":"89334965","quoteDwsol":"-10529526","simDwsol":"-10529526","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"100000000","out":"2305462341","host":"135509","bins":"-163->-162"},"match":true,"cu":92717}
+{"dir":"dlmm->pump 6PkALv","solIn":"500000000","slot":468426462,"pumpStable":false,"legA_out":"11527311730","legB_out":"446675792","quoteDwsol":"-52646662","simDwsol":"-52646662","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"500000000","out":"11527311730","host":"677546","bins":"-163->-162"},"match":true,"cu":92711}
+  dlmm->pump: DLMM state changed during sim window, retry
+{"dir":"dlmm->pump 6PkALv","solIn":"1000000000","slot":468426473,"pumpStable":true,"legA_out":"22835074398","legB_out":"883643883","quoteDwsol":"-114943743","simDwsol":"-114943743","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"1000000000","out":"22835074398","host":"1412374","bins":"-163->-161"},"match":true,"cu":98966}
+{"dir":"pump->dlmm H6Bcgd","solIn":"10000000","slot":468426480,"pumpStable":true,"legA_out":"254662367","legB_out":"8823096","quoteDwsol":"-1176904","simDwsol":"-1176904","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"254662367","out":"8803533","host":"19563","bins":"-132->-132"},"match":true,"cu":95569}
+  pump->dlmm: sim err {"InstructionError":[1,{"Custom":6040}]} with pump state moving, retry
+{"dir":"pump->dlmm H6Bcgd","solIn":"100000000","slot":468426492,"pumpStable":true,"legA_out":"2535544785","legB_out":"80945140","quoteDwsol":"-19054860","simDwsol":"-19054860","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"2535544785","out":"80765666","host":"179474","bins":"-132->-139"},"match":true,"cu":134138}
+{"dir":"pump->dlmm H6Bcgd","solIn":"500000000","slot":468426497,"pumpStable":true,"legA_out":"12673319217","legB_out":"336053400","quoteDwsol":"-163946600","simDwsol":"-163946600","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"12673319217","out":"335308281","host":"745119","bins":"-132->-149"},"match":true,"cu":190789}
+  pump->dlmm: sim err {"InstructionError":[1,{"Custom":6040}]} with pump state moving, retry
+{"dir":"pump->dlmm H6Bcgd","solIn":"1000000000","slot":468426509,"pumpStable":true,"legA_out":"25190718154","legB_out":"604475417","quoteDwsol":"-395524583","simDwsol":"-395524583","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"25190718154","out":"603135130","host":"1340287","bins":"-132->-154"},"match":true,"cu":218043}
+{"dir":"dlmm->pump H6Bcgd","solIn":"10000000","slot":468426515,"pumpStable":true,"legA_out":"228596131","legB_out":"8950734","quoteDwsol":"-1029266","simDwsol":"-1029266","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"10000000","out":"228596131","host":"20000","bins":"-132->-131"},"match":true,"cu":92391}
+{"dir":"dlmm->pump H6Bcgd","solIn":"100000000","slot":468426520,"pumpStable":true,"legA_out":"2111855316","legB_out":"82685823","quoteDwsol":"-17114181","simDwsol":"-17114181","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"100000000","out":"2111855316","host":"199996","bins":"-132->-124"},"match":true,"cu":136218}
+{"dir":"dlmm->pump H6Bcgd","solIn":"500000000","slot":468426525,"pumpStable":true,"legA_out":"7545829918","legB_out":"295869472","quoteDwsol":"-203130546","simDwsol":"-203130546","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"500000000","out":"7545829918","host":"999982","bins":"-132->-94"},"match":true,"cu":322751}
+{"dir":"dlmm->pump H6Bcgd","solIn":"1000000000","note":"leg A quote null"}
+latency: buy 1.12 us/quote, sell 0.70 us/quote
+
+SUMMARY: 23/23 scored cases match exactly; 1 not scored
+┌─────────┬────────────────────────────────┬───────────┬───────────┬───────────┬─────────────┬─────────────┬───────────┬────────────────────┐
+│ (index) │ k                              │ stable    │ qIn       │ sIn       │ qOut        │ sOut        │ fees      │ match              │
+├─────────┼────────────────────────────────┼───────────┼───────────┼───────────┼─────────────┼─────────────┼───────────┼────────────────────┤
+│ 0       │ 'pump->dlmm 5nwdWt 10000000'   │ false     │ undefined │ undefined │ -475947n    │ -475947n    │ undefined │ true               │
+│ 1       │ 'pump->dlmm 5nwdWt 100000000'  │ true      │ undefined │ undefined │ -4607789n   │ -4607789n   │ undefined │ true               │
+│ 2       │ 'pump->dlmm 5nwdWt 500000000'  │ false     │ undefined │ undefined │ -23171681n  │ -23171681n  │ undefined │ true               │
+│ 3       │ 'pump->dlmm 5nwdWt 1000000000' │ true      │ undefined │ undefined │ -45864634n  │ -45864634n  │ undefined │ true               │
+│ 4       │ 'dlmm->pump 5nwdWt 10000000'   │ false     │ undefined │ undefined │ -372980n    │ -372980n    │ undefined │ true               │
+│ 5       │ 'dlmm->pump 5nwdWt 100000000'  │ false     │ undefined │ undefined │ -3916468n   │ -3916468n   │ undefined │ true               │
+│ 6       │ 'dlmm->pump 5nwdWt 500000000'  │ false     │ undefined │ undefined │ -19550322n  │ -19550322n  │ undefined │ true               │
+│ 7       │ 'dlmm->pump 5nwdWt 1000000000' │ false     │ undefined │ undefined │ -42236951n  │ -42236951n  │ undefined │ true               │
+│ 8       │ 'pump->dlmm 6PkALv 10000000'   │ true      │ undefined │ undefined │ -658703n    │ -658703n    │ undefined │ true               │
+│ 9       │ 'pump->dlmm 6PkALv 100000000'  │ false     │ undefined │ undefined │ -7205494n   │ -7205494n   │ undefined │ true               │
+│ 10      │ 'pump->dlmm 6PkALv 500000000'  │ false     │ undefined │ undefined │ -27913704n  │ -27913704n  │ undefined │ true               │
+│ 11      │ 'pump->dlmm 6PkALv 1000000000' │ true      │ undefined │ undefined │ -59733012n  │ -59733012n  │ undefined │ true               │
+│ 12      │ 'dlmm->pump 6PkALv 10000000'   │ false     │ undefined │ undefined │ -1014088n   │ -1014088n   │ undefined │ true               │
+│ 13      │ 'dlmm->pump 6PkALv 100000000'  │ true      │ undefined │ undefined │ -10529526n  │ -10529526n  │ undefined │ true               │
+│ 14      │ 'dlmm->pump 6PkALv 500000000'  │ false     │ undefined │ undefined │ -52646662n  │ -52646662n  │ undefined │ true               │
+│ 15      │ 'dlmm->pump 6PkALv 1000000000' │ true      │ undefined │ undefined │ -114943743n │ -114943743n │ undefined │ true               │
+│ 16      │ 'pump->dlmm H6Bcgd 10000000'   │ true      │ undefined │ undefined │ -1176904n   │ -1176904n   │ undefined │ true               │
+│ 17      │ 'pump->dlmm H6Bcgd 100000000'  │ true      │ undefined │ undefined │ -19054860n  │ -19054860n  │ undefined │ true               │
+│ 18      │ 'pump->dlmm H6Bcgd 500000000'  │ true      │ undefined │ undefined │ -163946600n │ -163946600n │ undefined │ true               │
+│ 19      │ 'pump->dlmm H6Bcgd 1000000000' │ true      │ undefined │ undefined │ -395524583n │ -395524583n │ undefined │ true               │
+│ 20      │ 'dlmm->pump H6Bcgd 10000000'   │ true      │ undefined │ undefined │ -1029266n   │ -1029266n   │ undefined │ true               │
+│ 21      │ 'dlmm->pump H6Bcgd 100000000'  │ true      │ undefined │ undefined │ -17114181n  │ -17114181n  │ undefined │ true               │
+│ 22      │ 'dlmm->pump H6Bcgd 500000000'  │ true      │ undefined │ undefined │ -203130546n │ -203130546n │ undefined │ true               │
+│ 23      │ 'dlmm->pump H6Bcgd 1000000000' │ undefined │ undefined │ undefined │ undefined   │ undefined   │ undefined │ 'leg A quote null' │
+└─────────┴────────────────────────────────┴───────────┴───────────┴───────────┴─────────────┴─────────────┴───────────┴────────────────────┘

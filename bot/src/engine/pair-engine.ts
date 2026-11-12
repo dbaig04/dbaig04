@@ -26,11 +26,26 @@ import type { PendingHint } from "./engine.js";
 
 export type PairEngineConnection = StateConnection & SimConnection & Pick<Connection, "getLatestBlockhash">;
 
-export interface PairSpec {
-  /** Short name used in config / ledger rows, e.g. "max". */
+/** One route of a pair: venue A (e.g. the shared PumpSwap pool) vs venue B (one DLMM pool). */
+export interface PairRoute {
+  /** Route name used in plans / ledger rows, e.g. "max:H6Bcgd". */
   name: string;
   a: SwapVenue;
   b: SwapVenue;
+}
+
+export interface PairSpec {
+  /** Short name used in config / ledger rows, e.g. "max". */
+  name: string;
+  /** Single-route form (used when `routes` is absent). */
+  a: SwapVenue;
+  b: SwapVenue;
+  /**
+   * Several routes for the same token (e.g. PumpSwap vs each of three DLMM pools). Venues shared
+   * between routes (same object) are refreshed once per tick. Every route is evaluated each tick
+   * and the single best plan across routes is taken.
+   */
+  routes?: PairRoute[];
   tokenMint: PublicKey;
   /** Token program of the mint (Token-2022 for MAX). */
   tokenProgram: PublicKey;
@@ -63,8 +78,12 @@ export interface PairTickInfo {
   /** data arrival -> decision / -> final sim returned. */
   dataToDecisionMs?: number;
   dataToSimulatedMs?: number;
-  /** Best expected net per direction (even below floor), lamports. */
+  /** Best expected net per direction (even below floor), lamports — of the chosen/first route. */
   best?: Record<PairDirection, { grossIn: string; expectedProfit: string; skipped: boolean } | null>;
+  /** Per-route optimizer view (multi-route pairs): quote time, cache hit, best per direction. */
+  routes?: Record<string, { quoteUs: number; cached: boolean; screenEvals: number; exactEvals: number; best: Record<PairDirection, { grossIn: string; expectedProfit: string; skipped: boolean } | null>; feasible: boolean }>;
+  /** Route of the plan (if any). */
+  route?: string;
   plan?: ReturnType<typeof pairPlanRecord>;
   forced?: boolean;
   sim?: { ok: boolean; reason?: string; slot?: number; simulatedProfit?: string; expectedProfit?: string; unitsConsumed?: number; fee?: string };
@@ -134,8 +153,9 @@ export class PairEngine {
   inFlight = false;
   private readonly sender?: Sender;
   private log: (m: string) => void;
-  private cuLearned: Partial<Record<PairDirection, number>> = {};
-  private optCache: { key: string; res: PairOptimizeResult } | null = null;
+  private cuLearned: Record<string, number> = {};
+  private optCache = new Map<string, { key: string; res: PairOptimizeResult }>();
+  readonly routes: PairRoute[];
   private lastForced = 0;
 
   constructor(private d: PairEngineDeps) {
@@ -144,7 +164,8 @@ export class PairEngine {
     this.wsolAta = getAssociatedTokenAddressSync(NATIVE_MINT, this.user, true, TOKEN_PROGRAM_ID);
     this.tokenAta = getAssociatedTokenAddressSync(d.pair.tokenMint, this.user, true, d.pair.tokenProgram);
     this.balances = new TokenBalances(this.wsolAta, this.tokenAta);
-    const sources: StateSource[] = [d.pair.a, d.pair.b, this.balances];
+    this.routes = d.pair.routes?.length ? d.pair.routes : [{ name: d.pair.name, a: d.pair.a, b: d.pair.b }];
+    const sources: StateSource[] = [...this.allVenues(), this.balances];
     const polling = new StateManager(d.conn, sources, d.cfg.commitment);
     this.state = d.stateProvider ? d.stateProvider(sources, polling) : polling;
     this.latency = new LatencyStats(d.cfg.latencySummaryMs ?? 60_000);
@@ -160,8 +181,22 @@ export class PairEngine {
     this.blockhash.stop();
   }
 
+  /** Distinct venues across routes (shared venues once). */
+  allVenues(): SwapVenue[] {
+    const out: SwapVenue[] = [];
+    for (const r of this.routes) for (const v of [r.a, r.b]) if (!out.includes(v)) out.push(v);
+    return out;
+  }
+
+  /** First route's venues (single-route callers). */
   get venues() {
-    return { a: this.d.pair.a, b: this.d.pair.b };
+    return { a: this.routes[0].a, b: this.routes[0].b };
+  }
+
+  routeOf(plan: Pick<PairPlan, "pair">): PairRoute {
+    const r = this.routes.find((x) => x.name === plan.pair);
+    if (!r) throw new Error(`no route ${plan.pair}`);
+    return r;
   }
 
   execPolicy(): ExecFeePolicy {
@@ -181,26 +216,27 @@ export class PairEngine {
     return this.sessionNetLamports < -this.d.cfg.maxSessionLossLamports;
   }
 
-  private optimizeCached(slot: number, cap: bigint, floor: bigint, policy: ExecFeePolicy): { res: PairOptimizeResult; cached: boolean } {
-    const { a, b } = this.d.pair;
+  private optimizeCached(route: PairRoute, slot: number, cap: bigint, floor: bigint, policy: ExecFeePolicy): { res: PairOptimizeResult; cached: boolean } {
+    const { a, b } = route;
     const key = `${a.quoteKey()}|${b.quoteKey()}|${cap}|${floor}|${policy.tipEnabled}`;
-    if (this.optCache?.key === key) {
-      const c = this.optCache.res;
+    const hit = this.optCache.get(route.name);
+    if (hit?.key === key) {
+      const c = hit.res;
       const re = (p: PairPlan | null) => (p ? { ...p, slot } : null);
       return { res: { ...c, best: re(c.best), byDirection: { buyAsellB: re(c.byDirection.buyAsellB), buyBsellA: re(c.byDirection.buyBsellA) } }, cached: true };
     }
-    const res = optimizePair({ a, b }, { profitFloor: floor, fees: policy, maxLamportsIn: cap, minLamportsIn: this.d.cfg.minTradeLamports }, slot, this.d.search, this.name);
-    this.optCache = { key, res };
+    const res = optimizePair({ a, b }, { profitFloor: floor, fees: policy, maxLamportsIn: cap, minLamportsIn: this.d.cfg.minTradeLamports }, slot, this.d.search, route.name);
+    this.optCache.set(route.name, { key, res });
     return { res, cached: false };
   }
 
   /** Invalidate the optimizer cache (e.g. a shred hint says a pool is about to move). */
   invalidate(): void {
-    this.optCache = null;
+    this.optCache.clear();
   }
 
   private haltCheck() {
-    for (const v of [this.d.pair.a, this.d.pair.b]) if ((v as { programStale?: boolean }).programStale) this.risk.trip("program-upgrade", `${v.name} reports a program upgrade (programStale)`);
+    for (const v of this.allVenues()) if ((v as { programStale?: boolean }).programStale) this.risk.trip("program-upgrade", `${v.name} reports a program upgrade (programStale)`);
     return this.risk.halt();
   }
 
@@ -209,7 +245,7 @@ export class PairEngine {
     this.d.ledger.append("risk", { pair: this.name, slot, stage, reasons, ...extra });
   }
 
-  private learnCu(dir: PairDirection, sim: SimResult): void {
+  private learnCu(dir: string, sim: SimResult): void {
     if (!sim.ok || !sim.unitsConsumed) { delete this.cuLearned[dir]; return; }
     const need = cuFromSim(Math.ceil(sim.unitsConsumed * 1.1), this.d.cfg.cuHeadroomBps);
     const prev = this.cuLearned[dir];
@@ -257,24 +293,41 @@ export class PairEngine {
     const floor = this.profitFloor();
     const policy = this.execPolicy();
     const q0 = performance.now();
-    const { res, cached } = this.optimizeCached(slot, cap, floor, policy);
+    const bestOf = (r: PairOptimizeResult) => Object.fromEntries((["buyAsellB", "buyBsellA"] as PairDirection[]).map((k) => {
+      const d = r.details[k];
+      const p = d.best;
+      return [k, p ? { grossIn: p.grossIn.toString(), expectedProfit: p.expectedProfit.toString(), skipped: d.skipped } : null];
+    })) as NonNullable<PairTickInfo["best"]>;
+    // every route each tick (shared venues were refreshed once); take the single best plan across routes
+    const perRoute: { route: PairRoute; res: PairOptimizeResult; cached: boolean }[] = [];
+    info.routes = {};
+    let screenEvals = 0, exactEvals = 0, allCached = true;
+    for (const route of this.routes) {
+      const r0 = performance.now();
+      const { res: rr, cached: rc } = this.optimizeCached(route, slot, cap, floor, policy);
+      const se = rc ? 0 : rr.details.buyAsellB.screenEvals + rr.details.buyBsellA.screenEvals;
+      const ee = rc ? 0 : rr.details.buyAsellB.exactEvals + rr.details.buyBsellA.exactEvals;
+      screenEvals += se; exactEvals += ee; allCached &&= rc;
+      info.routes[route.name] = { quoteUs: Math.round((performance.now() - r0) * 1000), cached: rc, screenEvals: se, exactEvals: ee, best: bestOf(rr), feasible: !!rr.best };
+      perRoute.push({ route, res: rr, cached: rc });
+    }
+    const byProfit = (x: PairPlan | null, y: PairPlan | null) => (x && (!y || x.expectedProfit > y.expectedProfit) ? -1 : y && (!x || y.expectedProfit > x.expectedProfit) ? 1 : 0);
+    const chosen = [...perRoute].sort((x, y) => byProfit(x.res.best, y.res.best))[0];
+    const res = chosen.res;
+    const cached = allCached;
     marks.decided = performance.now();
     info.wallDecided = Date.now();
     info.quoteUs = Math.round((marks.decided - q0) * 1000);
     info.cached = cached;
-    info.screenEvals = cached ? 0 : res.details.buyAsellB.screenEvals + res.details.buyBsellA.screenEvals;
-    info.exactEvals = cached ? 0 : res.details.buyAsellB.exactEvals + res.details.buyBsellA.exactEvals;
-    info.best = Object.fromEntries((["buyAsellB", "buyBsellA"] as PairDirection[]).map((k) => {
-      const d = res.details[k];
-      const p = d.best;
-      return [k, p ? { grossIn: p.grossIn.toString(), expectedProfit: p.expectedProfit.toString(), skipped: d.skipped } : null];
-    })) as PairTickInfo["best"];
+    info.screenEvals = screenEvals;
+    info.exactEvals = exactEvals;
+    info.best = bestOf(res);
     const force = cfg.mode === "simulate" && (this.d.forceSimEveryMs ?? 0) > 0 && Date.now() - this.lastForced >= this.d.forceSimEveryMs!;
     let plan = res.best;
     let forced = false;
     if (!plan && force) {
       // latency measurement only: the best (sub-floor) plan of either direction
-      const cands = [res.details.buyAsellB.best, res.details.buyBsellA.best].filter((p): p is PairPlan => !!p && p.grossIn <= cap);
+      const cands = perRoute.flatMap((x) => [x.res.details.buyAsellB.best, x.res.details.buyBsellA.best]).filter((p): p is PairPlan => !!p && p.grossIn <= cap);
       cands.sort((x, y) => (x.expectedProfit > y.expectedProfit ? -1 : 1));
       plan = cands[0] ?? null;
       forced = !!plan;
@@ -282,7 +335,11 @@ export class PairEngine {
     if (!plan) return { status: "no-opportunity", slot, opt: res };
     if (forced) this.lastForced = Date.now();
     info.plan = pairPlanRecord(plan);
+    info.route = plan.pair;
     info.forced = forced;
+    const route = this.routeOf(plan);
+    const venues = { a: route.a, b: route.b };
+    const cuKey = `${plan.pair}:${plan.direction}`;
     if (!forced) {
       const pending = this.d.pending?.summary?.(slot, this.name);
       ledger.append("opportunity", { pair: this.name, slot, plan: pairPlanRecord(plan), other: Object.fromEntries(Object.entries(res.byDirection).map(([k, v]) => [k, v ? v.expectedProfit : null])), ...(pending ? { pending } : {}), trigger, latency: latencyRecord(slot, info.stateSource, "opportunity", marks, trigger) });
@@ -314,16 +371,16 @@ export class PairEngine {
       profitFloorLamports: floor, toleranceLamports: cfg.simToleranceLamports, toleranceBps: cfg.simToleranceBps,
     };
     const simPlan = { lamportsIn: plan.lamportsIn, lamportsOut: plan.lamportsOut };
-    const learned = this.cuLearned[plan.direction];
+    const learned = this.cuLearned[cuKey];
     let built: PairBuiltTx;
     let buildMs = 0;
     try {
       if (learned) {
-        built = buildPairTx(plan, this.venues, { ...base, cuLimit: learned, signer });
+        built = buildPairTx(plan, venues, { ...base, cuLimit: learned, signer });
         marks.built = performance.now();
         buildMs = marks.built - b0;
       } else {
-        const simTx = buildPairTx(plan, this.venues, { ...base, cuLimit: SIM_CU });
+        const simTx = buildPairTx(plan, venues, { ...base, cuLimit: SIM_CU });
         marks.built = performance.now();
         buildMs = marks.built - b0;
         const sim = await simulateArb(this.d.conn, simTx.tx, simPlan, { ...simBase, tipLamports: simTx.tipLamports, feeForUnits: (u: number) => { const cuLimit = cuFromSim(u, cfg.cuHeadroomBps); return { cuLimit, fee: feeFor(cuLimit) }; } });
@@ -337,7 +394,7 @@ export class PairEngine {
           return { status: "sim-rejected", slot, plan, sim, opt: res };
         }
         const bb = performance.now();
-        built = buildPairTx(plan, this.venues, { ...base, cuLimit: cuFromSim(sim.unitsConsumed, cfg.cuHeadroomBps), signer });
+        built = buildPairTx(plan, venues, { ...base, cuLimit: cuFromSim(sim.unitsConsumed, cfg.cuHeadroomBps), signer });
         buildMs += performance.now() - bb;
       }
     } catch (e) {
@@ -361,7 +418,7 @@ export class PairEngine {
     marks.simulated = performance.now();
     info.finalSimMs = r1(marks.simulated - marks.finalBuilt);
     info.sim = simInfo(sim2);
-    this.learnCu(plan.direction, sim2);
+    this.learnCu(cuKey, sim2);
     ledger.append("simulation", { pair: this.name, slot, stage: "final", forced, direction: plan.direction, cuLimit: final.cuLimit, cuPrice: final.cuPriceMicroLamports, fee: final.feeLamports, txVersion: final.version, txSize: final.size, ...simRecord(sim2), latency: latencyRecord(slot, info.stateSource, sim2.ok ? "simulated" : "sim-rejected", marks, trigger) });
     if (!sim2.ok) {
       this.log(`[${this.name} ${slot}] final sim rejected${forced ? " (forced, sub-floor)" : ""}: ${sim2.reason}`);

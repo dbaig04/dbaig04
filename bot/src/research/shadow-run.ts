@@ -15,10 +15,17 @@ import { makeReadConnection } from "../feeds/index.js";
 import { Ledger } from "../engine/ledger.js";
 import { PairEngine, type PairTickInfo } from "../engine/pair-engine.js";
 import { ShadowRecorder } from "../engine/shadow.js";
-import { MAX_DLMM_POOL, MAX_PUMPSWAP_POOL, MAX_SIM_USER, maxPairSpec } from "../engine/pair-venues.js";
+import { MAX_DLMM_POOLS, MAX_PUMPSWAP_POOL, MAX_SIM_USER, maxPairSpec } from "../engine/pair-venues.js";
 import { CompetitorWatcher } from "./competitors.js";
 import { RateLimitedRpc } from "./rpc.js";
-import { compare, renderShadowMd, summarizeTicks } from "./shadow-report.js";
+import { compare, renderShadowMd, summarizeTicks, untakenOpportunities } from "./shadow-report.js";
+import type { CompetitorArb } from "./competitors.js";
+
+export function untakenLines(ticks: PairTickInfo[], arbs: CompetitorArb[]): string[] {
+  const un = untakenOpportunities(ticks, arbs);
+  return ["## Opportunities we found that no competitor took", "", `${un.opportunityTicks} floor-clearing opportunity ticks; ${un.untaken.length} had no competitor arb on the same route + direction within 25 slots after.`,
+    ...un.untaken.slice(0, 30).map((u) => `- ${u.route} slot ${u.slot} ${u.direction}: in ${u.grossIn}, expected net ${u.expected}, our sim ${u.simOk === null ? "–" : u.simOk ? "ok" : `fail (${u.simReason})`}`), ""];
+}
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -32,7 +39,9 @@ async function main() {
   const mdPath = process.env.SHADOW_MD ?? "src/research/SHADOW.md";
   const conn = makeReadConnection(cfg);
   const ledger = new Ledger(join(dir, "ledger.jsonl"));
-  const spec = maxPairSpec();
+  const pools = (process.env.MAX_DLMM_POOLS ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  const dlmmPools = pools.length ? pools : [...MAX_DLMM_POOLS];
+  const spec = maxPairSpec(dlmmPools);
   const lookupTables: AddressLookupTableAccount[] = [];
   for (const k of (process.env.PAIR_LOOKUP_TABLES ?? "").split(",").filter(Boolean)) {
     const r = await conn.getAddressLookupTable(new PublicKey(k));
@@ -49,16 +58,16 @@ async function main() {
   const tipsPath = process.env.JITO_TIPS_JSON;
   const tips = tipsPath && existsSync(tipsPath) ? new Set<string>(JSON.parse(readFileSync(tipsPath, "utf8")).result) : undefined;
   const rpc = new RateLimitedRpc({ rps: Number(process.env.RESEARCH_RPS ?? 0.6), url: cfg.rpcUrl });
-  const watcher = new CompetitorWatcher(rpc, { watch: MAX_DLMM_POOL, pumpPool: MAX_PUMPSWAP_POOL, dlmmPool: MAX_DLMM_POOL, txDir: join(dir, "tx"), outPath: join(dir, "competitors.jsonl"), tips, log: console.log, intervalMs: Number(process.env.SHADOW_COMP_POLL_MS ?? 20_000) });
+  const watcher = new CompetitorWatcher(rpc, { watch: dlmmPools, pumpPool: MAX_PUMPSWAP_POOL, dlmmPools, txDir: join(dir, "tx"), outPath: join(dir, "competitors.jsonl"), tips, log: console.log, intervalMs: Number(process.env.SHADOW_COMP_POLL_MS ?? 20_000) });
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
-  console.log(`shadow: MAX pair, user ${user.toBase58()} (${cfg.keypair ? "keypair" : "read-only sim user"}), poll ${cfg.pollIntervalMs} ms, ${minutes} min -> ${dir}`);
+  console.log(`shadow: MAX pair, routes ${spec.routes!.map((r) => r.name).join(", ")}, user ${user.toBase58()} (${cfg.keypair ? "keypair" : "read-only sim user"}), poll ${cfg.pollIntervalMs} ms, ${minutes} min -> ${dir}`);
   const notes = [
     "Measured here: everything in the tables. Not measured: landing (nothing is ever sent), gRPC/shred detection (not available in this sandbox).",
     "Detection in this sandbox = public-RPC polling: getSlot + one getMultipleAccountsInfo per tick, every POLL_INTERVAL_MS. A competitor that back-runs a pool move in the same slot is invisible to a poller whose snapshots are several slots apart; the 'slots between consecutive snapshots' row bounds how often we can even observe pre-trade state.",
   ];
   const write = (interim: boolean) => {
-    const md = renderShadowMd({ title: "MAX shadow run (PumpSwap ⇄ Meteora DLMM)", startedAt, minutes: (Date.now() - t0) / 60_000, interim, summary: summarizeTicks(ticks), comparisons: compare(ticks, watcher.arbs), competitorTxsScanned: watcher.seen, notes });
+    const md = renderShadowMd({ title: "MAX shadow run (PumpSwap ⇄ Meteora DLMM)", startedAt, minutes: (Date.now() - t0) / 60_000, interim, summary: summarizeTicks(ticks), comparisons: compare(ticks, watcher.arbs), competitorTxsScanned: watcher.seen, notes: [...untakenLines(ticks, watcher.arbs), ...notes] });
     writeFileSync(mdPath, md);
     writeFileSync(join(dir, "summary.json"), JSON.stringify({ recorder: rec.summary(), comparisons: compare(ticks, watcher.arbs) }, null, 1));
   };
@@ -72,7 +81,7 @@ async function main() {
     const ts = Date.now();
     try {
       const r = await engine.tick("timeout");
-      if (r.status !== "stale" && r.status !== "no-opportunity") console.log(`[${r.slot}] ${r.status}${r.plan ? ` ${r.plan.direction} in ${r.plan.grossIn} exp ${r.plan.expectedProfit}` : ""}${r.sim ? ` sim ${r.sim.ok ? "ok" : r.sim.reason}` : ""}`);
+      if (r.status !== "stale" && r.status !== "no-opportunity") console.log(`[${r.slot}] ${r.status}${r.plan ? ` ${r.plan.pair} ${r.plan.direction} in ${r.plan.grossIn} exp ${r.plan.expectedProfit}` : ""}${r.sim ? ` sim ${r.sim.ok ? "ok" : r.sim.reason}` : ""}`);
       backoff = 0;
     } catch (e) {
       console.error(`tick error: ${(e as Error).message}`);
@@ -90,4 +99,4 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+if (process.argv[1]?.endsWith("shadow-run.ts")) main().catch((e) => { console.error(e); process.exit(1); });

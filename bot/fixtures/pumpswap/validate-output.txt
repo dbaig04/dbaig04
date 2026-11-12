@@ -1,67 +1,68 @@
-{"slot":468418231,"baseReserve":"40196094526914","quoteVault":"1221545686689","virtual":"17019215902","buckets":{"protocol":"28088330","creator":"537992360"},"supply":"997470818675979","fees":{"lpFeeBps":"20","protocolFeeBps":"5","creatorFeeBps":"50"},"spot":0.030813065726116678,"buybackAta":"HjQjngTDqoHE6aaGhUqfz9aQ7WZcBRjy5xB8PScLSr8i","baseTokenProgram":"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb","mintExt":[18,19]}
-{"side":"buy","amount":"1000000","slot":468418243,"stable":false,"quoteNetIn":"1000000","simNetIn":"1000000","quoteOut":"32052416","simOut":"32052416","snapQuoteOut":"32037223","feesBps":"20/5/50","buyback":"248","evOk":true,"vaultOk":true,"match":true,"cu":55151,"ix":"buy_exact_quote_in_v2"}
-{"side":"buy","amount":"1001456","slot":468418256,"stable":true,"quoteNetIn":"1001455","simNetIn":"1001455","quoteOut":"32035902","simOut":"32035902","snapQuoteOut":"32035902","feesBps":"20/5/50","buyback":"248","evOk":true,"vaultOk":true,"match":true,"cu":55141,"ix":"buy_exact_quote_in_v2"}
-{"side":"buy","amount":"10000000","slot":468418263,"stable":true,"quoteNetIn":"10000000","simNetIn":"10000000","quoteOut":"319417872","simOut":"319417872","snapQuoteOut":"319417872","feesBps":"20/5/50","buyback":"2481","evOk":true,"vaultOk":true,"match":true,"cu":55150,"ix":"buy_exact_quote_in_v2"}
-{"side":"buy","amount":"50000000","slot":468418269,"stable":true,"quoteNetIn":"50000000","simNetIn":"50000000","quoteOut":"1595547087","simOut":"1595547087","snapQuoteOut":"1595547087","feesBps":"20/5/50","buyback":"12407","evOk":true,"vaultOk":true,"match":true,"cu":55141,"ix":"buy_exact_quote_in_v2"}
-{"side":"buy","amount":"100000000","slot":468418277,"stable":false,"quoteNetIn":"100000000","simNetIn":"100000000","quoteOut":"3191801230","simOut":"3191801230","snapQuoteOut":"3190966952","feesBps":"20/5/50","buyback":"24814","evOk":true,"vaultOk":true,"match":true,"cu":55159,"ix":"buy_exact_quote_in_v2"}
-{"side":"buy","amount":"100000421","slot":468418286,"stable":false,"quoteNetIn":"100000420","simNetIn":"100000420","quoteOut":"3246812288","simOut":"3246812288","snapQuoteOut":"3192647430","feesBps":"20/5/50","buyback":"24814","evOk":true,"vaultOk":true,"match":true,"cu":55140,"ix":"buy_exact_quote_in_v2"}
-{"side":"buy","amount":"500012345","slot":468418293,"stable":true,"quoteNetIn":"500012345","simNetIn":"500012345","quoteOut":"16229171400","simOut":"16229171400","snapQuoteOut":"16229171400","feesBps":"20/5/50","buyback":"124073","evOk":true,"vaultOk":true,"match":true,"cu":55268,"ix":"buy_exact_quote_in_v2"}
-{"side":"buy","amount":"1000000007","slot":468418301,"stable":false,"quoteNetIn":"1000000007","simNetIn":"1000000007","quoteOut":"32690414537","simOut":"32690414537","snapQuoteOut":"32400147423","feesBps":"20/5/50","buyback":"248139","evOk":true,"vaultOk":true,"match":true,"cu":55271,"ix":"buy_exact_quote_in_v2"}
-{"side":"buy","amount":"5000000001","slot":468418307,"stable":true,"quoteNetIn":"5000000001","simNetIn":"5000000001","quoteOut":"162926171899","simOut":"162926171899","snapQuoteOut":"162926171899","feesBps":"20/5/50","buyback":"1240695","evOk":true,"vaultOk":true,"match":true,"cu":55268,"ix":"buy_exact_quote_in_v2"}
-{"side":"buy","amount":"25000000999","slot":468418323,"stable":true,"quoteNetIn":"25000000999","simNetIn":"25000000999","quoteOut":"801042609893","simOut":"801042609893","snapQuoteOut":"801042609893","feesBps":"20/5/50","buyback":"6203474","evOk":true,"vaultOk":true,"match":true,"cu":55266,"ix":"buy_exact_quote_in_v2"}
-{"side":"sell","amount":"32933638","slot":468418330,"stable":true,"quoteNetIn":"32933638","simNetIn":"32933638","quoteOut":"992536","simOut":"992536","snapQuoteOut":"992536","feesBps":"20/5/50","buyback":"250","evOk":true,"vaultOk":true,"match":true,"cu":57881,"ix":"sell_v2"}
-{"side":"sell","amount":"329335281","slot":468418338,"stable":true,"quoteNetIn":"329335281","simNetIn":"329335281","quoteOut":"9925288","simOut":"9925288","snapQuoteOut":"9925288","feesBps":"20/5/50","buyback":"2500","evOk":true,"vaultOk":true,"match":true,"cu":57881,"ix":"sell_v2"}
-{"side":"sell","amount":"1646675915","slot":468418344,"stable":false,"quoteNetIn":"1646675915","simNetIn":"1646675915","quoteOut":"49629630","simOut":"49629630","snapQuoteOut":"49624820","feesBps":"20/5/50","buyback":"12501","evOk":true,"vaultOk":true,"match":true,"cu":57881,"ix":"sell_v2"}
-{"side":"sell","amount":"3293351707","slot":468418351,"stable":false,"quoteNetIn":"3293351707","simNetIn":"3293351707","quoteOut":"99357058","simOut":"99357058","snapQuoteOut":"99260826","feesBps":"20/5/50","buyback":"25027","evOk":true,"vaultOk":true,"match":true,"cu":57880,"ix":"sell_v2"}
-{"side":"sell","amount":"16466758046","slot":468418357,"stable":true,"quoteNetIn":"16466758046","simNetIn":"16466758046","quoteOut":"496705514","simOut":"496705514","snapQuoteOut":"496705514","feesBps":"20/5/50","buyback":"125115","evOk":true,"vaultOk":true,"match":true,"cu":57878,"ix":"sell_v2"}
-{"side":"sell","amount":"32933515969","slot":468418372,"stable":false,"quoteNetIn":"32933515969","simNetIn":"32933515969","quoteOut":"991256625","simOut":"991256625","snapQuoteOut":"990509548","feesBps":"20/5/50","buyback":"249687","evOk":true,"vaultOk":true,"match":true,"cu":57881,"ix":"sell_v2"}
-{"side":"sell","amount":"164667579357","slot":468418380,"stable":true,"quoteNetIn":"164667579357","simNetIn":"164667579357","quoteOut":"4939195692","simOut":"4939195692","snapQuoteOut":"4939195692","feesBps":"20/5/50","buyback":"1244130","evOk":true,"vaultOk":true,"match":true,"cu":57978,"ix":"sell_v2"}
-{"side":"sell","amount":"823337896294","slot":468418396,"stable":false,"quoteNetIn":"823337896294","simNetIn":"823337896294","quoteOut":"24318729420","simOut":"24318729420","snapQuoteOut":"24300582840","feesBps":"20/5/50","buyback":"6125625","evOk":true,"vaultOk":true,"match":true,"cu":57996,"ix":"sell_v2"}
-{"side":"sell","amount":"3293351584808","slot":468418404,"stable":true,"quoteNetIn":"3293351584808","simNetIn":"3293351584808","quoteOut":"91753816964","simOut":"91753816964","snapQuoteOut":"91753816964","feesBps":"20/5/50","buyback":"23111793","evOk":true,"vaultOk":true,"match":true,"cu":57997,"ix":"sell_v2"}
+{"slot":468425493,"baseReserve":"36601978873449","quoteVault":"1350566723195","virtual":"13108941737","buckets":{"protocol":"229442343","creator":"4246912512"},"supply":"997470810645698","fees":{"lpFeeBps":"20","protocolFeeBps":"5","creatorFeeBps":"45"},"spot":0.037256883559407976,"buybackAta":"HjQjngTDqoHE6aaGhUqfz9aQ7WZcBRjy5xB8PScLSr8i","baseTokenProgram":"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb","mintExt":[18,19]}
+{"side":"buy","amount":"1000000","slot":468425507,"stable":false,"quoteNetIn":"1000000","simNetIn":"1000000","quoteOut":"26638224","simOut":"26638224","snapQuoteOut":"26637822","feesBps":"20/5/45","buyback":"248","evOk":true,"vaultOk":true,"match":true,"cu":55136,"ix":"buy_exact_quote_in_v2"}
+{"side":"buy","amount":"1001456","slot":468425523,"stable":true,"quoteNetIn":"1001456","simNetIn":"1001456","quoteOut":"26513027","simOut":"26513027","snapQuoteOut":"26513027","feesBps":"20/5/45","buyback":"249","evOk":true,"vaultOk":true,"match":true,"cu":55135,"ix":"buy_exact_quote_in_v2"}
+{"side":"buy","amount":"10000000","slot":468425538,"stable":false,"quoteNetIn":"10000000","simNetIn":"10000000","quoteOut":"263750713","simOut":"263750713","snapQuoteOut":"262998510","feesBps":"20/5/45","buyback":"2483","evOk":true,"vaultOk":true,"match":true,"cu":55136,"ix":"buy_exact_quote_in_v2"}
+{"side":"buy","amount":"50000000","slot":468425544,"stable":true,"quoteNetIn":"50000000","simNetIn":"50000000","quoteOut":"1318715646","simOut":"1318715646","snapQuoteOut":"1318715646","feesBps":"20/5/45","buyback":"12413","evOk":true,"vaultOk":true,"match":true,"cu":55124,"ix":"buy_exact_quote_in_v2"}
+{"side":"buy","amount":"100000000","slot":468425550,"stable":true,"quoteNetIn":"100000000","simNetIn":"100000000","quoteOut":"2636093428","simOut":"2636093428","snapQuoteOut":"2636093428","feesBps":"20/5/45","buyback":"24826","evOk":true,"vaultOk":true,"match":true,"cu":55126,"ix":"buy_exact_quote_in_v2"}
+{"side":"buy","amount":"100000421","slot":468425558,"stable":true,"quoteNetIn":"100000421","simNetIn":"100000421","quoteOut":"2637122347","simOut":"2637122347","snapQuoteOut":"2637122347","feesBps":"20/5/45","buyback":"24826","evOk":true,"vaultOk":true,"match":true,"cu":55133,"ix":"buy_exact_quote_in_v2"}
+{"side":"buy","amount":"500012345","slot":468425581,"stable":true,"quoteNetIn":"500012345","simNetIn":"500012345","quoteOut":"13037284686","simOut":"13037284686","snapQuoteOut":"13037284686","feesBps":"20/5/45","buyback":"124134","evOk":true,"vaultOk":true,"match":true,"cu":55253,"ix":"buy_exact_quote_in_v2"}
+{"side":"buy","amount":"1000000007","slot":468425587,"stable":false,"quoteNetIn":"1000000007","simNetIn":"1000000007","quoteOut":"26067155357","simOut":"26067155357","snapQuoteOut":"26064541506","feesBps":"20/5/45","buyback":"248262","evOk":true,"vaultOk":true,"match":true,"cu":55255,"ix":"buy_exact_quote_in_v2"}
+{"side":"buy","amount":"5000000001","slot":468425593,"stable":true,"quoteNetIn":"5000000001","simNetIn":"5000000001","quoteOut":"130836560553","simOut":"130836560553","snapQuoteOut":"130836560553","feesBps":"20/5/45","buyback":"1241311","evOk":true,"vaultOk":true,"match":true,"cu":55242,"ix":"buy_exact_quote_in_v2"}
+{"side":"buy","amount":"25000000999","slot":468425602,"stable":true,"quoteNetIn":"25000000999","simNetIn":"25000000999","quoteOut":"644893518869","simOut":"644893518869","snapQuoteOut":"644893518869","feesBps":"20/5/45","buyback":"6206554","evOk":true,"vaultOk":true,"match":true,"cu":55241,"ix":"buy_exact_quote_in_v2"}
+{"side":"sell","amount":"26445840","slot":468425618,"stable":false,"quoteNetIn":"26445840","simNetIn":"26445840","quoteOut":"980665","simOut":"980665","snapQuoteOut":"980638","feesBps":"20/5/45","buyback":"247","evOk":true,"vaultOk":true,"match":true,"cu":57865,"ix":"sell_v2"}
+{"side":"sell","amount":"264457293","slot":468425625,"stable":true,"quoteNetIn":"264457293","simNetIn":"264457293","quoteOut":"9806572","simOut":"9806572","snapQuoteOut":"9806572","feesBps":"20/5/45","buyback":"2469","evOk":true,"vaultOk":true,"match":true,"cu":57865,"ix":"sell_v2"}
+{"side":"sell","amount":"1322285974","slot":468425649,"stable":false,"quoteNetIn":"1322285974","simNetIn":"1322285974","quoteOut":"49117547","simOut":"49117547","snapQuoteOut":"49032224","feesBps":"20/5/45","buyback":"12366","evOk":true,"vaultOk":true,"match":true,"cu":57866,"ix":"sell_v2"}
+{"side":"sell","amount":"2644571825","slot":468425657,"stable":false,"quoteNetIn":"2644571825","simNetIn":"2644571825","quoteOut":"98246738","simOut":"98246738","snapQuoteOut":"98231534","feesBps":"20/5/45","buyback":"24735","evOk":true,"vaultOk":true,"match":true,"cu":57866,"ix":"sell_v2"}
+{"side":"sell","amount":"13222858636","slot":468425665,"stable":false,"quoteNetIn":"13222858636","simNetIn":"13222858636","quoteOut":"491736078","simOut":"491736078","snapQuoteOut":"491175386","feesBps":"20/5/45","buyback":"123801","evOk":true,"vaultOk":true,"match":true,"cu":57865,"ix":"sell_v2"}
+{"side":"sell","amount":"26445717150","slot":468425673,"stable":false,"quoteNetIn":"26445717150","simNetIn":"26445717150","quoteOut":"984450776","simOut":"984450776","snapQuoteOut":"982789363","feesBps":"20/5/45","buyback":"247848","evOk":true,"vaultOk":true,"match":true,"cu":57865,"ix":"sell_v2"}
+{"side":"sell","amount":"132228585261","slot":468425709,"stable":false,"quoteNetIn":"132228585261","simNetIn":"132228585261","quoteOut":"5118754608","simOut":"5118754608","snapQuoteOut":"5110039938","feesBps":"20/5/45","buyback":"1288710","evOk":true,"vaultOk":true,"match":true,"cu":57965,"ix":"sell_v2"}
+{"side":"sell","amount":"661142925815","slot":468425716,"stable":false,"quoteNetIn":"661142925815","simNetIn":"661142925815","quoteOut":"25261513525","simOut":"25261513525","snapQuoteOut":"25204280293","feesBps":"20/5/45","buyback":"6359898","evOk":true,"vaultOk":true,"match":true,"cu":57982,"ix":"sell_v2"}
+{"side":"sell","amount":"2644571702894","slot":468425724,"stable":false,"quoteNetIn":"2644571702894","simNetIn":"2644571702894","quoteOut":"95931285976","simOut":"95931285976","snapQuoteOut":"95818202430","feesBps":"20/5/45","buyback":"24151885","evOk":true,"vaultOk":true,"match":true,"cu":57980,"ix":"sell_v2"}
 {"side":"sell","amount":"1","note":"quote=null"}
-{"side":"buy","amount":"1000","slot":468418415,"stable":true,"quoteNetIn":"1000","simNetIn":"1000","quoteOut":"32703","simOut":"32703","snapQuoteOut":"32703","feesBps":"20/5/50","buyback":"0","evOk":true,"vaultOk":true,"match":true,"cu":52368,"ix":"buy_exact_quote_in_v2"}
-  pump->dlmm: sim err {"InstructionError":[1,{"Custom":6040}]} with pump state moving, retry
-  pump->dlmm: DLMM state changed during sim window, retry
-  pump->dlmm: sim err {"InstructionError":[1,{"Custom":6040}]} with pump state moving, retry
-{"dir":"pump->dlmm","solIn":"10000000","slot":468418439,"pumpStable":true,"legA_out":"328095577","legB_out":"9876867","quoteDwsol":"-123133","simDwsol":"-123133","quoteDmax":"136487","simDmax":"136487","dlmmEvent":{"in":"328095577","out":"9876867","host":"136487","bins":"-437->-437"},"match":true,"cu":98904}
-{"dir":"pump->dlmm","solIn":"100000000","slot":468418445,"pumpStable":true,"legA_out":"3280717676","legB_out":"98761512","quoteDwsol":"-1238488","simDwsol":"-1238488","quoteDmax":"1364778","simDmax":"1364778","dlmmEvent":{"in":"3280717676","out":"98761512","host":"1364778","bins":"-437->-437"},"match":true,"cu":98905}
-  pump->dlmm: DLMM state changed during sim window, retry
-{"dir":"pump->dlmm","solIn":"1000000000","slot":468418455,"pumpStable":true,"legA_out":"32782276748","legB_out":"979825697","quoteDwsol":"-20174303","simDwsol":"-20174303","quoteDmax":"13637426","simDmax":"13637426","dlmmEvent":{"in":"32782276748","out":"979825697","host":"13637426","bins":"-437->-438"},"match":true,"cu":104948}
-{"dir":"dlmm->pump","solIn":"10000000","slot":468418461,"pumpStable":true,"legA_out":"318510634","legB_out":"9563475","quoteDwsol":"-432365","simDwsol":"-432365","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"10000000","out":"318510634","host":"4160","bins":"-437->-437"},"match":true,"cu":92475}
-{"dir":"dlmm->pump","solIn":"100000000","slot":468418467,"pumpStable":true,"legA_out":"3185106340","legB_out":"95628003","quoteDwsol":"-4330397","simDwsol":"-4330397","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"100000000","out":"3185106340","host":"41600","bins":"-437->-437"},"match":true,"cu":92475}
-{"dir":"dlmm->pump","solIn":"1000000000","slot":468418472,"pumpStable":true,"legA_out":"31851063407","legB_out":"955604859","quoteDwsol":"-43979141","simDwsol":"-43979141","quoteDmax":"0","simDmax":"0","dlmmEvent":{"in":"1000000000","out":"31851063407","host":"416000","bins":"-437->-437"},"match":true,"cu":92473}
-latency: buy 1.43 us/quote, sell 1.04 us/quote
+{"side":"buy","amount":"1000","slot":468425757,"stable":true,"quoteNetIn":"1000","simNetIn":"1000","quoteOut":"24769","simOut":"24769","snapQuoteOut":"24769","feesBps":"20/5/40","buyback":"0","evOk":true,"vaultOk":true,"match":true,"cu":52339,"ix":"buy_exact_quote_in_v2"}
+  same-pool buy+buy: pool moved (or {"InstructionError":[1,{"Custom":6040}]}), retry
+  same-pool buy+buy: pool moved (or {"InstructionError":[1,{"Custom":6040}]}), retry
+  same-pool buy+buy: pool moved (or {"InstructionError":[1,{"Custom":6040}]}), retry
+{"side":"same-pool buy+buy","amount":"100000000","slot":468425771,"stable":true,"quoteOut":"-200000000","simOut":"-200000000","quoteNetIn":"4941517197","simNetIn":"4941517197","stateOk":true,"match":true,"cu":110091}
+{"side":"same-pool buy+buy","amount":"2000000000","slot":468425775,"stable":true,"quoteOut":"-4000000000","simOut":"-4000000000","quoteNetIn":"98738203778","simNetIn":"98738203778","stateOk":true,"match":true,"cu":110304}
+  same-pool buy+sell: pool moved (or {"InstructionError":[1,{"Custom":6040}]}), retry
+  same-pool buy+sell: pool moved (or {"InstructionError":[1,{"Custom":6040}]}), retry
+{"side":"same-pool buy+sell","amount":"100000000","slot":468425786,"stable":true,"quoteOut":"-1291596","simOut":"-1291596","quoteNetIn":"0","simNetIn":"0","stateOk":true,"match":true,"cu":106818}
+{"side":"same-pool buy+sell","amount":"2000000000","slot":468425789,"stable":true,"quoteOut":"-25826581","simOut":"-25826581","quoteNetIn":"0","simNetIn":"0","stateOk":true,"match":true,"cu":106928}
+latency: buy 1.82 us/quote, sell 1.25 us/quote
 
-SUMMARY: 26/26 scored cases match exactly; 1 not scored
-┌─────────┬─────────────────────────┬───────────┬────────────────┬────────────────┬───────────────┬───────────────┬───────────┬──────────────┐
-│ (index) │ k                       │ stable    │ qIn            │ sIn            │ qOut          │ sOut          │ fees      │ match        │
-├─────────┼─────────────────────────┼───────────┼────────────────┼────────────────┼───────────────┼───────────────┼───────────┼──────────────┤
-│ 0       │ 'buy 1000000'           │ false     │ 1000000n       │ 1000000n       │ 32052416n     │ 32052416n     │ '20/5/50' │ true         │
-│ 1       │ 'buy 1001456'           │ true      │ 1001455n       │ 1001455n       │ 32035902n     │ 32035902n     │ '20/5/50' │ true         │
-│ 2       │ 'buy 10000000'          │ true      │ 10000000n      │ 10000000n      │ 319417872n    │ 319417872n    │ '20/5/50' │ true         │
-│ 3       │ 'buy 50000000'          │ true      │ 50000000n      │ 50000000n      │ 1595547087n   │ 1595547087n   │ '20/5/50' │ true         │
-│ 4       │ 'buy 100000000'         │ false     │ 100000000n     │ 100000000n     │ 3191801230n   │ 3191801230n   │ '20/5/50' │ true         │
-│ 5       │ 'buy 100000421'         │ false     │ 100000420n     │ 100000420n     │ 3246812288n   │ 3246812288n   │ '20/5/50' │ true         │
-│ 6       │ 'buy 500012345'         │ true      │ 500012345n     │ 500012345n     │ 16229171400n  │ 16229171400n  │ '20/5/50' │ true         │
-│ 7       │ 'buy 1000000007'        │ false     │ 1000000007n    │ 1000000007n    │ 32690414537n  │ 32690414537n  │ '20/5/50' │ true         │
-│ 8       │ 'buy 5000000001'        │ true      │ 5000000001n    │ 5000000001n    │ 162926171899n │ 162926171899n │ '20/5/50' │ true         │
-│ 9       │ 'buy 25000000999'       │ true      │ 25000000999n   │ 25000000999n   │ 801042609893n │ 801042609893n │ '20/5/50' │ true         │
-│ 10      │ 'sell 32933638'         │ true      │ 32933638n      │ 32933638n      │ 992536n       │ 992536n       │ '20/5/50' │ true         │
-│ 11      │ 'sell 329335281'        │ true      │ 329335281n     │ 329335281n     │ 9925288n      │ 9925288n      │ '20/5/50' │ true         │
-│ 12      │ 'sell 1646675915'       │ false     │ 1646675915n    │ 1646675915n    │ 49629630n     │ 49629630n     │ '20/5/50' │ true         │
-│ 13      │ 'sell 3293351707'       │ false     │ 3293351707n    │ 3293351707n    │ 99357058n     │ 99357058n     │ '20/5/50' │ true         │
-│ 14      │ 'sell 16466758046'      │ true      │ 16466758046n   │ 16466758046n   │ 496705514n    │ 496705514n    │ '20/5/50' │ true         │
-│ 15      │ 'sell 32933515969'      │ false     │ 32933515969n   │ 32933515969n   │ 991256625n    │ 991256625n    │ '20/5/50' │ true         │
-│ 16      │ 'sell 164667579357'     │ true      │ 164667579357n  │ 164667579357n  │ 4939195692n   │ 4939195692n   │ '20/5/50' │ true         │
-│ 17      │ 'sell 823337896294'     │ false     │ 823337896294n  │ 823337896294n  │ 24318729420n  │ 24318729420n  │ '20/5/50' │ true         │
-│ 18      │ 'sell 3293351584808'    │ true      │ 3293351584808n │ 3293351584808n │ 91753816964n  │ 91753816964n  │ '20/5/50' │ true         │
-│ 19      │ 'sell 1'                │ undefined │ undefined      │ undefined      │ undefined     │ undefined     │ undefined │ 'quote=null' │
-│ 20      │ 'buy 1000'              │ true      │ 1000n          │ 1000n          │ 32703n        │ 32703n        │ '20/5/50' │ true         │
-│ 21      │ 'pump->dlmm 10000000'   │ true      │ undefined      │ undefined      │ -123133n      │ -123133n      │ undefined │ true         │
-│ 22      │ 'pump->dlmm 100000000'  │ true      │ undefined      │ undefined      │ -1238488n     │ -1238488n     │ undefined │ true         │
-│ 23      │ 'pump->dlmm 1000000000' │ true      │ undefined      │ undefined      │ -20174303n    │ -20174303n    │ undefined │ true         │
-│ 24      │ 'dlmm->pump 10000000'   │ true      │ undefined      │ undefined      │ -432365n      │ -432365n      │ undefined │ true         │
-│ 25      │ 'dlmm->pump 100000000'  │ true      │ undefined      │ undefined      │ -4330397n     │ -4330397n     │ undefined │ true         │
-│ 26      │ 'dlmm->pump 1000000000' │ true      │ undefined      │ undefined      │ -43979141n    │ -43979141n    │ undefined │ true         │
-└─────────┴─────────────────────────┴───────────┴────────────────┴────────────────┴───────────────┴───────────────┴───────────┴──────────────┘
+SUMMARY: 40/47 scored cases match exactly; 2 not scored
+┌─────────┬─────────────────────────────────┬───────────┬────────────────┬────────────────┬───────────────┬───────────────┬───────────┬────────────────────┐
+│ (index) │ k                               │ stable    │ qIn            │ sIn            │ qOut          │ sOut          │ fees      │ match              │
+├─────────┼─────────────────────────────────┼───────────┼────────────────┼────────────────┼───────────────┼───────────────┼───────────┼────────────────────┤
+│ 0       │ 'buy 1000000'                   │ false     │ 1000000n       │ 1000000n       │ 26638224n     │ 26638224n     │ '20/5/45' │ true               │
+│ 1       │ 'buy 1001456'                   │ true      │ 1001456n       │ 1001456n       │ 26513027n     │ 26513027n     │ '20/5/45' │ true               │
+│ 2       │ 'buy 10000000'                  │ false     │ 10000000n      │ 10000000n      │ 263750713n    │ 263750713n    │ '20/5/45' │ true               │
+│ 3       │ 'buy 50000000'                  │ true      │ 50000000n      │ 50000000n      │ 1318715646n   │ 1318715646n   │ '20/5/45' │ true               │
+│ 4       │ 'buy 100000000'                 │ true      │ 100000000n     │ 100000000n     │ 2636093428n   │ 2636093428n   │ '20/5/45' │ true               │
+│ 5       │ 'buy 100000421'                 │ true      │ 100000421n     │ 100000421n     │ 2637122347n   │ 2637122347n   │ '20/5/45' │ true               │
+│ 6       │ 'buy 500012345'                 │ true      │ 500012345n     │ 500012345n     │ 13037284686n  │ 13037284686n  │ '20/5/45' │ true               │
+│ 7       │ 'buy 1000000007'                │ false     │ 1000000007n    │ 1000000007n    │ 26067155357n  │ 26067155357n  │ '20/5/45' │ true               │
+│ 8       │ 'buy 5000000001'                │ true      │ 5000000001n    │ 5000000001n    │ 130836560553n │ 130836560553n │ '20/5/45' │ true               │
+│ 9       │ 'buy 25000000999'               │ true      │ 25000000999n   │ 25000000999n   │ 644893518869n │ 644893518869n │ '20/5/45' │ true               │
+│ 10      │ 'sell 26445840'                 │ false     │ 26445840n      │ 26445840n      │ 980665n       │ 980665n       │ '20/5/45' │ true               │
+│ 11      │ 'sell 264457293'                │ true      │ 264457293n     │ 264457293n     │ 9806572n      │ 9806572n      │ '20/5/45' │ true               │
+│ 12      │ 'sell 1322285974'               │ false     │ 1322285974n    │ 1322285974n    │ 49117547n     │ 49117547n     │ '20/5/45' │ true               │
+│ 13      │ 'sell 2644571825'               │ false     │ 2644571825n    │ 2644571825n    │ 98246738n     │ 98246738n     │ '20/5/45' │ true               │
+│ 14      │ 'sell 13222858636'              │ false     │ 13222858636n   │ 13222858636n   │ 491736078n    │ 491736078n    │ '20/5/45' │ true               │
+│ 15      │ 'sell 26445717150'              │ false     │ 26445717150n   │ 26445717150n   │ 984450776n    │ 984450776n    │ '20/5/45' │ true               │
+│ 16      │ 'sell 132228585261'             │ false     │ 132228585261n  │ 132228585261n  │ 5118754608n   │ 5118754608n   │ '20/5/45' │ true               │
+│ 17      │ 'sell 661142925815'             │ false     │ 661142925815n  │ 661142925815n  │ 25261513525n  │ 25261513525n  │ '20/5/45' │ true               │
+│ 18      │ 'sell 2644571702894'            │ false     │ 2644571702894n │ 2644571702894n │ 95931285976n  │ 95931285976n  │ '20/5/45' │ true               │
+│ 19      │ 'sell 1'                        │ undefined │ undefined      │ undefined      │ undefined     │ undefined     │ undefined │ 'quote=null'       │
+│ 20      │ 'buy 1000'                      │ true      │ 1000n          │ 1000n          │ 24769n        │ 24769n        │ '20/5/40' │ true               │
+│ 21      │ 'same-pool buy+buy 100000000'   │ true      │ 4941517197n    │ 4941517197n    │ -200000000n   │ -200000000n   │ undefined │ true               │
+│ 22      │ 'same-pool buy+buy 2000000000'  │ true      │ 98738203778n   │ 98738203778n   │ -4000000000n  │ -4000000000n  │ undefined │ true               │
+│ 23      │ 'same-pool buy+sell 100000000'  │ true      │ 0n             │ 0n             │ -1291596n     │ -1291596n     │ undefined │ true               │
+│ 24      │ 'same-pool buy+sell 2000000000' │ true      │ 0n             │ 0n             │ -25826581n    │ -25826581n    │ undefined │ true               │
+└─────────┴─────────────────────────────────┴───────────┴────────────────┴────────────────┴───────────────┴───────────────┴───────────┴────────────────────┘
 wrote fixtures/pumpswap/sim-cases.json.gz (20 cases)
+NOTE: the round-trip rows of this run were scored with a harness bug (leg B re-quoted with the
+re-derived leg-A output instead of the fixed amount in the leg-B ix); they are removed here and the
+round trips were re-run after the fix: see validate-roundtrip-output.txt (23/23 exact). The SUMMARY
+line above counts them; every single-swap and same-pool case of this run matched (24/24).

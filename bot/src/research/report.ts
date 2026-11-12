@@ -7,7 +7,8 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { analyzeTx, quantile, type RawTxV1, type TxAnalysis } from "./analyze.js";
-import { maxArbOf } from "./competitors.js";
+import { maxArbAnyRoute } from "./competitors.js";
+import { MAX_DLMM_POOLS } from "../engine/pair-venues.js";
 import type { SigInfo } from "./rpc.js";
 
 export const RESEARCH_WALLET = "8pY1AukbuPgUE3EetyLa59rFLMimJGT94ZzbMEZcQF4w";
@@ -143,8 +144,9 @@ export function walletStats(txs: TxAnalysis[], sigs: Sig[]) {
 }
 
 export function poolArbStats(txs: TxAnalysis[], sigs: Sig[]) {
-  const arbs = txs.map((t) => ({ t, a: maxArbOf(t, PUMP_POOL, DLMM_POOL) })).filter((x) => x.a && x.a.direction !== "mixed") as { t: TxAnalysis; a: NonNullable<ReturnType<typeof maxArbOf>> }[];
-  const dlmmSwaps = txs.filter((t) => t.success && t.legs.some((l) => l.pool === DLMM_POOL));
+  const arbs = txs.map((t) => ({ t, a: maxArbAnyRoute(t, PUMP_POOL, MAX_DLMM_POOLS) })).filter((x) => x.a) as { t: TxAnalysis; a: NonNullable<ReturnType<typeof maxArbAnyRoute>> }[];
+  const dlmmSet = new Set<string>(MAX_DLMM_POOLS);
+  const dlmmSwaps = txs.filter((t) => t.success && t.legs.some((l) => dlmmSet.has(l.pool)));
   const dlmmRefs = txs.length;
   const bySig = new Map(sigs.map((s) => [s.signature, s]));
   const payers = groupBy(arbs, (x) => x.a.feePayer);
@@ -177,6 +179,7 @@ export function poolArbStats(txs: TxAnalysis[], sigs: Sig[]) {
     dirs: Object.fromEntries([...groupBy(arbs, (x) => x.a.direction).entries()].map(([k, v]) => [k, v.length])),
     backrun: { idxKnown, sameSlotDlmmTrigger: sameSlotTrigger, dlmmTriggerWithin3SlotsBefore: prevSlotTrigger },
     perPayer,
+    perRoute: Object.fromEntries([...groupBy(arbs, (x) => x.a.route).entries()].map(([k, v]) => [k, { n: v.length, payers: new Set(v.map((x) => x.a.feePayer)).size, net: q(v.map((x) => x.a.walletSolNet)), above100k: v.filter((x) => x.a.walletSolNet >= 100_000).length }])),
     arbsPerHour: span && span.minutes > 0 ? (arbs.length / span.minutes) * 60 : undefined,
     above100k: arbs.filter((x) => x.a.walletSolNet >= 100_000).length,
   };

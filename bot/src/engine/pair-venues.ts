@@ -15,6 +15,9 @@ import { dlmmReserve } from "../feeds/shreds.js";
 
 export const MAX_PUMPSWAP_POOL = "Eoe22HdCa9rhtBwKL6nNZmZxfuzF35xkxobcvfaF1vWQ";
 export const MAX_DLMM_POOL = "H6Bcgdsxbpv5KjjyydddZPECg1BXe53uHnQSSkfiyKQ";
+/** The three MAX/wSOL DLMM pools traded against the PumpSwap pool (MAX = token X in all three, checked on-chain). */
+export const MAX_DLMM_POOLS = ["5nwdWtMHvrcUPJpoXSYWcPQv9wkoNzhCME5XJ4KmktzJ", "6PkALvWhf2PJ3VwPsezFJdmvQ684REGkr7vLBihkNkH", MAX_DLMM_POOL] as const;
+export const routeName = (dlmmPool: string) => `max:${dlmmPool.slice(0, 6)}`;
 /** Wallet simulated as for MAX when no keypair is given (the research wallet: holds wSOL + MAX ATAs). */
 export const MAX_SIM_USER = "8pY1AukbuPgUE3EetyLa59rFLMimJGT94ZzbMEZcQF4w";
 
@@ -36,26 +39,35 @@ export function dlmmRebateAtRisk(v: DlmmSwapVenue, q: SwapQuote): bigint {
   return (host * (last - base) + last - 1n) / last + slack;
 }
 
-export function createMaxVenues(): { pumpswap: PumpSwapPool; dlmm: DlmmSwapVenue } {
-  const pumpswap = new PumpSwapPool({ pool: MAX_PUMPSWAP_POOL, tokenMint: MAX_MINT });
-  const dlmm = new DlmmSwapVenue({ pool: MAX_DLMM_POOL, tokenMint: MAX_MINT, tokenSide: "x" });
+export function createDlmmVenue(pool: string): DlmmSwapVenue {
+  const dlmm = new DlmmSwapVenue({ pool, tokenMint: MAX_MINT, tokenSide: "x" });
   // pair-optimizer.ts rebate hook: only the at-risk part of the DLMM SOL rebate pads the min-out
   (dlmm as DlmmSwapVenue & { rebateAtRisk?: (side: "buy" | "sell", amountIn: bigint, q: SwapQuote) => bigint }).rebateAtRisk = (_side, _amt, q) => dlmmRebateAtRisk(dlmm, q);
-  return { pumpswap, dlmm };
+  return dlmm;
 }
 
-export function maxPairSpec(): PairSpec & { pumpswap: PumpSwapPool; dlmmVenue: DlmmSwapVenue } {
-  const { pumpswap, dlmm } = createMaxVenues();
-  return { name: "max", a: pumpswap, b: dlmm, tokenMint: new PublicKey(MAX_MINT), tokenProgram: TOKEN_2022_PROGRAM_ID, pumpswap, dlmmVenue: dlmm };
+export function createMaxVenues(dlmmPool: string = MAX_DLMM_POOL): { pumpswap: PumpSwapPool; dlmm: DlmmSwapVenue } {
+  return { pumpswap: new PumpSwapPool({ pool: MAX_PUMPSWAP_POOL, tokenMint: MAX_MINT }), dlmm: createDlmmVenue(dlmmPool) };
+}
+
+/**
+ * MAX pair: one shared PumpSwap venue vs each DLMM pool (MAX_DLMM_ROUTES / default all three).
+ * The PumpSwap object is shared, so its state is fetched and decoded once per tick.
+ */
+export function maxPairSpec(dlmmPools: readonly string[] = MAX_DLMM_POOLS): PairSpec & { pumpswap: PumpSwapPool; dlmmVenues: DlmmSwapVenue[] } {
+  const pumpswap = new PumpSwapPool({ pool: MAX_PUMPSWAP_POOL, tokenMint: MAX_MINT });
+  const dlmmVenues = dlmmPools.map(createDlmmVenue);
+  const routes = dlmmVenues.map((b, i) => ({ name: routeName(dlmmPools[i]), a: pumpswap, b }));
+  return { name: "max", a: pumpswap, b: dlmmVenues[0], routes, tokenMint: new PublicKey(MAX_MINT), tokenProgram: TOKEN_2022_PROGRAM_ID, pumpswap, dlmmVenues };
 }
 
 /** Shred watch entry for the MAX pair: pool addresses (+ DLMM reserves). */
-export function maxShredWatch(): PairWatch {
+export function maxShredWatch(dlmmPools: readonly string[] = MAX_DLMM_POOLS): PairWatch {
   return {
     name: "max",
     pools: [
       { name: "pumpswap", accounts: [MAX_PUMPSWAP_POOL] },
-      { name: "dlmm", accounts: [MAX_DLMM_POOL, dlmmReserve(MAX_DLMM_POOL, MAX_MINT), dlmmReserve(MAX_DLMM_POOL, "So11111111111111111111111111111111111111112")] },
+      ...dlmmPools.map((p) => ({ name: routeName(p), accounts: [p, dlmmReserve(p, MAX_MINT), dlmmReserve(p, "So11111111111111111111111111111111111111112")] })),
     ],
   };
 }

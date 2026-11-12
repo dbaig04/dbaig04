@@ -223,3 +223,36 @@ test("roundTrip: gross = out − netIn; token residual = leg-1 out − leg-2 net
   assert.equal(p.tokenResidual, p.token - p.sellQuote.netIn);
   assert.ok(p.lamportsIn < p.grossIn);
 });
+
+test("pair engine: multiple routes share venue A; every route is quoted each tick and the best plan across routes is taken", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pair-"));
+  try {
+    const ledger = new Ledger(join(dir, "l.jsonl"));
+    const user = Keypair.generate().publicKey;
+    const wsolAta = getAssociatedTokenAddressSync(NATIVE_MINT, user, true, TOKEN_PROGRAM_ID);
+    const tokenAta = getAssociatedTokenAddressSync(MAX, user, true, TOKEN_2022_PROGRAM_ID);
+    const a = cp(25_000n), b1 = bins(24_000n), b2 = bins(23_000n), b3 = bins(25_000n);
+    let fetched = 0;
+    for (const v of [a, b1, b2, b3]) v.accounts = () => { fetched++; return []; };
+    const ch = pairChain([a, b1, b2, b3], wsolAta, tokenAta, { wsol: 1_000_000_000n, tok: 0n });
+    const ticks: { routes?: Record<string, { feasible: boolean }>; route?: string }[] = [];
+    const eng = new PairEngine({
+      conn: ch.conn as never, cfg: cfgWith(), ledger, user, log: () => {},
+      pair: { name: "max", a, b: b1, routes: [{ name: "max:b1", a, b: b1 }, { name: "max:b2", a, b: b2 }, { name: "max:b3", a, b: b3 }], tokenMint: MAX, tokenProgram: TOKEN_2022_PROGRAM_ID },
+      onTick: (i) => ticks.push(i),
+    });
+    assert.equal(eng.allVenues().length, 4, "shared venue A is a single state source");
+    const r = await eng.tick();
+    eng.close();
+    assert.equal(r.status, "simulated", toJson(r.sim ?? null));
+    assert.equal(r.plan!.pair, "max:b2");
+    assert.equal(r.plan!.direction, "buyBsellA");
+    const t = ticks.at(-1)!;
+    assert.deepEqual(Object.keys(t.routes!).sort(), ["max:b1", "max:b2", "max:b3"]);
+    assert.equal(t.routes!["max:b3"].feasible, false);
+    assert.equal(t.route, "max:b2");
+    // the tx was built on route b2's venues
+    const keys = ch.sims.at(-1)!.message.staticAccountKeys;
+    assert.ok(keys.some((k) => k.equals(b2.programId)) && !keys.some((k) => k.equals(b1.programId)));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

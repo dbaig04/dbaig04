@@ -322,7 +322,8 @@ export class MeteoraDlmm implements DlmmVenue {
       // walk bins inside this array
       while (left > 0n) {
         const bin = ba.bins[activeId - lower];
-        const view = binView(bin, swapForY, slo && ba.version >= 3);
+        // limit orders live in version-2 bin arrays too (observed on 5nwdWt): gate on the pair only
+        const view = binView(bin, swapForY, slo);
         if (binMaxOut(view) > 0n) {
           updateVolatilityAccumulator(v, s, activeId);
           const rate = totalFeeRate(binStep, s, v.volatilityAccumulator);
@@ -337,7 +338,7 @@ export class MeteoraDlmm implements DlmmVenue {
             fee += r.fee;
             protocolFee += r.protocolFee;
             // host fee is split off per bin (floor per bin), not on the swap total
-            if (this.opts.hostFeeRebate) hostFee += (r.protocolFee * HOST_FEE_BPS) / BASIS_POINT_MAX;
+            if (this.opts.hostFeeRebate) hostFee += r.hostFee;
             lastRate = rate;
             endBinId = activeId;
             trace?.push({ ai, j: activeId - lower, toBin: r.amountIn - r.fee, fromBin: r.binOut ?? r.amountOut });
