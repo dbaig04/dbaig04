@@ -112,11 +112,18 @@ export async function simulateArb(conn: SimConnection, tx: VersionedTransaction,
   const accs = v.accounts;
   if (!accs || accs.length !== 2 || !accs[0] || !accs[1]) return { ...base, reason: "sim did not return token account post-state" };
   const dec = (a: NonNullable<(typeof accs)[number]>) => decodeTokenAmount(Buffer.from(a.data[0], "base64"));
-  const wsolPost = dec(accs[0]);
-  const risePost = dec(accs[1]);
+  return evaluateSimOutcome(base, v.unitsConsumed, dec(accs[0]), dec(accs[1]), plan, p);
+}
+
+/**
+ * Checks shared by every simulator (RPC simulateTransaction here, LiteSVM in local-sim.ts) once the
+ * tx executed without error: Δ = post − pre of the user's wSOL / token accounts, simulated profit =
+ * Δ wSOL − fee − tip, then token loss / floor / deviation-from-quote checks.
+ */
+export function evaluateSimOutcome(base: SimResult, unitsConsumed: number, wsolPost: bigint, risePost: bigint, plan: SimPlan, p: Pick<SimParams, "wsolPre" | "risePre" | "feeForUnits" | "tipLamports" | "profitFloorLamports" | "toleranceLamports" | "toleranceBps">): SimResult {
   const wsolDelta = wsolPost - p.wsolPre;
   const riseDelta = risePost - p.risePre;
-  const { cuLimit, fee } = p.feeForUnits(v.unitsConsumed);
+  const { cuLimit, fee } = p.feeForUnits(unitsConsumed);
   const tip = p.tipLamports ?? 0n;
   const simulatedProfit = wsolDelta - fee - tip;
   const expectedProfit = plan.lamportsOut - plan.lamportsIn - fee - tip;

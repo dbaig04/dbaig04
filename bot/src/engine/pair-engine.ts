@@ -23,6 +23,7 @@ import { RiskGuard } from "./risk.js";
 import { conservativeNet, optimizePair, type PairDirection, type PairOptimizeResult, type PairPlan, type PairSearchOptions } from "./pair-optimizer.js";
 import { buildPairTx, pairOpportunityKey, pairPlanRecord, type PairBuiltTx } from "./pair.js";
 import type { PendingHint } from "./engine.js";
+import { LocalSimAccounts, LocalSimShadow, type LocalRun, type LocalTxSimulator } from "./local-sim.js";
 
 export type PairEngineConnection = StateConnection & SimConnection & Pick<Connection, "getLatestBlockhash">;
 
@@ -133,6 +134,12 @@ export interface PairEngineDeps {
   forceSimEveryMs?: number;
   /** Per-tick observer (shadow.ts). */
   onTick?: (info: PairTickInfo) => void;
+  /**
+   * LOCAL_SIM=shadow (simulate mode only): run a local full-tx LiteSVM simulation of the exact tx on
+   * the exact snapshot alongside every pre / final RPC simulation and log the comparison
+   * (`local_simulation` ledger rows). The RPC simulation remains the only gate.
+   */
+  localSim?: LocalTxSimulator;
 }
 
 /** Venue hook: user accounts that must already exist (e.g. PumpSwap's user_volume_accumulator). */
@@ -179,6 +186,9 @@ export class PairEngine {
   readonly prereqs: UserPrereqs;
   private prereqWarned = "";
   private lastForced = 0;
+  /** LOCAL_SIM=shadow: extra live accounts + snapshot capture, and the comparison recorder. */
+  readonly localAccounts?: LocalSimAccounts;
+  readonly localShadow?: LocalSimShadow;
 
   constructor(private d: PairEngineDeps) {
     this.name = d.pair.name;
@@ -188,11 +198,17 @@ export class PairEngine {
     this.balances = new TokenBalances(this.wsolAta, this.tokenAta);
     this.routes = d.pair.routes?.length ? d.pair.routes : [{ name: d.pair.name, a: d.pair.a, b: d.pair.b }];
     this.prereqs = new UserPrereqs(this.allVenues(), this.user);
-    const sources: StateSource[] = [...this.allVenues(), this.balances, this.prereqs];
+    if (d.localSim && d.cfg.mode !== "simulate") throw new Error("local simulation shadow is simulation-only (MODE=simulate)");
+    if (d.localSim) this.localAccounts = new LocalSimAccounts(this.allVenues(), this.user);
+    const sources: StateSource[] = [...this.allVenues(), this.balances, this.prereqs, ...(this.localAccounts ? [this.localAccounts] : [])];
     const polling = new StateManager(d.conn, sources, d.cfg.commitment);
     this.state = d.stateProvider ? d.stateProvider(sources, polling) : polling;
     this.latency = new LatencyStats(d.cfg.latencySummaryMs ?? 60_000);
     this.log = d.log ?? ((m) => console.log(m));
+    if (d.localSim && this.localAccounts) {
+      this.localAccounts.provider = this.state as unknown as LocalSimAccounts["provider"];
+      this.localShadow = new LocalSimShadow(d.localSim, d.ledger, { stateConn: d.conn, stateCheck: d.cfg.localSim?.stateCheck !== false, log: this.log });
+    }
     if (d.cfg.mode === "live" && (!d.sender || !d.cfg.keypair)) throw new Error("live mode needs a sender and keypair");
     if (d.cfg.mode === "live" && d.cfg.keypair && !d.cfg.keypair.publicKey.equals(this.user)) throw new Error("live mode: pair user must be the keypair");
     this.risk = d.risk ?? new RiskGuard(d.cfg.risk, { persist: false, log: this.log });
@@ -416,8 +432,13 @@ export class PairEngine {
         const simTx = buildPairTx(plan, venues, { ...base, cuLimit: SIM_CU });
         marks.built = performance.now();
         buildMs = marks.built - b0;
-        const sim = await simulateArb(this.d.conn, simTx.tx, simPlan, { ...simBase, tipLamports: simTx.tipLamports, feeForUnits: (u: number) => { const cuLimit = cuFromSim(u, cfg.cuHeadroomBps); return { cuLimit, fee: feeFor(cuLimit) }; } });
+        const preParams = { ...simBase, tipLamports: simTx.tipLamports, feeForUnits: (u: number) => { const cuLimit = cuFromSim(u, cfg.cuHeadroomBps); return { cuLimit, fee: feeFor(cuLimit) }; } };
+        // LOCAL_SIM=shadow: local full-tx sim of this exact tx + snapshot, started first, compared afterwards (never gates)
+        const localPre = this.localStart(simTx.tx, simPlan, preParams, blockhash);
+        const rpcPreAt = performance.now();
+        const sim = await simulateArb(this.d.conn, simTx.tx, simPlan, preParams);
         marks.preSimulated = performance.now();
+        if (localPre) void this.localShadow!.finish(localPre, sim, { pair: this.name, route: plan.pair, direction: plan.direction, stage: "pre", forced, snapshotSlot: slot, dataAt: marks.dataAt, rpcStartedAt: rpcPreAt, rpcDoneAt: marks.preSimulated });
         info.preSimMs = r1(marks.preSimulated - marks.built);
         ledger.append("simulation", { pair: this.name, slot, stage: "pre", forced, direction: plan.direction, ...simRecord(sim), snapshotSlot: slot, simSlot: sim.slot, route: plan.pair });
         if (!sim.unitsConsumed || (!sim.ok && !forced)) {
@@ -447,8 +468,12 @@ export class PairEngine {
     const final: PairBuiltTx = { ...built, tx: prepared.tx, instructions: prepared.instructions };
     const tipLamports = prepared.tipLamports;
     marks.finalBuilt = performance.now();
-    const sim2 = await simulateArb(this.d.conn, final.tx, simPlan, { ...simBase, tipLamports, feeForUnits: () => ({ cuLimit: final.cuLimit, fee: final.feeLamports }) });
+    const finalParams = { ...simBase, tipLamports, feeForUnits: () => ({ cuLimit: final.cuLimit, fee: final.feeLamports }) };
+    const localFinal = this.localStart(final.tx, simPlan, finalParams, blockhash);
+    const rpcFinalAt = performance.now();
+    const sim2 = await simulateArb(this.d.conn, final.tx, simPlan, finalParams);
     marks.simulated = performance.now();
+    if (localFinal) void this.localShadow!.finish(localFinal, sim2, { pair: this.name, route: plan.pair, direction: plan.direction, stage: "final", forced, snapshotSlot: slot, dataAt: marks.dataAt, rpcStartedAt: rpcFinalAt, rpcDoneAt: marks.simulated });
     info.finalSimMs = r1(marks.simulated - marks.finalBuilt);
     info.sim = simInfo(sim2);
     this.learnCu(cuKey, sim2);
@@ -482,6 +507,18 @@ export class PairEngine {
     }
     const outcome = await this.send(final, lastValidBlockHeight, slot, marks, { sim: sim2, tipLamports, messageHash: msgHash, oppKey });
     return { status: "sent", slot, plan, sim: sim2, outcome, opt: res };
+  }
+
+  /** LOCAL_SIM=shadow: start the local simulation of `tx` on this tick's snapshot (null when off). */
+  private localStart(tx: PairBuiltTx["tx"], plan: { lamportsIn: bigint; lamportsOut: bigint }, params: Parameters<typeof simulateArb>[3], blockhash: string): LocalRun | null {
+    if (!this.localShadow || !this.localAccounts) return null;
+    const la = this.localAccounts;
+    const age = this.blockhash.ageMs();
+    return this.localShadow.start({
+      tx, snapshot: la.snapshot(), user: this.user, wsolAta: this.wsolAta, tokenAta: this.tokenAta, plan, params,
+      lookupTables: this.d.pair.lookupTables, blockhash: age !== null && this.blockhash.get()?.blockhash === blockhash ? { value: blockhash, ageMs: age } : undefined,
+      onMissing: (k) => la.learn(k),
+    });
   }
 
   private async send(b: PairBuiltTx, lastValidBlockHeight: number, slot: number, marks: LatencyMarks, x: { sim: SimResult; tipLamports: bigint; messageHash: string; oppKey: string }): Promise<Realized> {

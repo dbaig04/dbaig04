@@ -15,7 +15,9 @@ export type LedgerEventType =
   /** startup on-chain vs ledger balance reconciliation */
   | "reconcile"
   /** on-chain wSOL / RISE balance snapshot (baseline for the next reconcile) */
-  | "balances";
+  | "balances"
+  /** LOCAL_SIM=shadow: local LiteSVM vs RPC simulation of the same tx (src/engine/local-sim.ts) */
+  | "local_simulation";
 
 export interface LedgerEvent {
   ts: string;

@@ -145,6 +145,18 @@ export interface PairsConfig {
   forceSimMs: number;
 }
 
+/** Local full-transaction simulation (src/engine/local-sim.ts). */
+export interface LocalSimConfig {
+  /** LOCAL_SIM: off (default) | shadow (simulate mode only: local LiteSVM sim of every pre/final sim's exact tx, compared with the RPC sim, which stays the gate). */
+  mode: "off" | "shadow";
+  /** LOCAL_SIM_TIMEOUT_MS: per-simulation deadline; past it the worker is killed and respawned. */
+  timeoutMs: number;
+  /** LOCAL_SIM_CACHE_DIR: program binaries cached per deploy slot. */
+  cacheDir: string;
+  /** LOCAL_SIM_STATE_CHECK: on a mismatch, re-read the tx's writable accounts at the RPC sim's slot (1 RPC call). */
+  stateCheck: boolean;
+}
+
 export interface Config {
   rpcUrl: string;
   mode: Mode;
@@ -204,6 +216,7 @@ export interface Config {
   jito: JitoConfig;
   risk: RiskConfig;
   pairs: PairsConfig;
+  localSim: LocalSimConfig;
 }
 
 function env(name: string, def?: string): string | undefined {
@@ -276,6 +289,9 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
     if (deliveryRaw === "ab") assertLiveAbAllowed(process.env);
     const delivery = deliveryRaw as Delivery;
     const risk = riskFromEnv();
+    const localSimMode = (env("LOCAL_SIM", "off") as string).toLowerCase();
+    if (localSimMode !== "off" && localSimMode !== "shadow") throw new Error(`LOCAL_SIM must be off|shadow, got ${localSimMode}`);
+    if (localSimMode === "shadow" && mode !== "simulate") throw new Error("LOCAL_SIM=shadow is simulation-only (MODE=simulate)");
     return {
       rpcUrl: env("RPC_URL", "https://api.mainnet-beta.solana.com")!,
       mode,
@@ -320,6 +336,12 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
         simUser: env("PAIR_SIM_USER") ? new PublicKey(env("PAIR_SIM_USER")!) : undefined,
         lookupTables: (env("PAIR_LOOKUP_TABLES") ?? "").split(",").map((x) => x.trim()).filter(Boolean).map((x) => new PublicKey(x).toBase58()),
         forceSimMs: mode === "simulate" ? num("PAIR_FORCE_SIM_MS", 0) : 0,
+      },
+      localSim: {
+        mode: localSimMode as LocalSimConfig["mode"],
+        timeoutMs: int("LOCAL_SIM_TIMEOUT_MS", 500, 20, 10_000) ?? 500,
+        cacheDir: env("LOCAL_SIM_CACHE_DIR", "data/local-sim")!,
+        stateCheck: bool("LOCAL_SIM_STATE_CHECK", true),
       },
     };
   } finally {

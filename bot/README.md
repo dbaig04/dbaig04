@@ -99,6 +99,7 @@ MODE=live KEYPAIR_PATH=~/bot.keypair.json CONFIRM_LIVE=yes RPC_URL=https://<your
 | `SIM_MAX_AGE_MS` | `3000` | The sender refuses a tx whose exact message did not simulate OK within this window. |
 | `KILL_FILE` / `RISK_STATE_PATH` / `PID_FILE` | `data/STOP` / `data/risk-state.json` / `data/bot.pid` | E-stop file, persistent risk state, pid for `estop.ts`. |
 | `UPGRADE_CHECK_MS` | `30000` | Programdata deploy-slot check of the RISE and Meteora DLMM programs. |
+| `LOCAL_SIM` / `LOCAL_SIM_TIMEOUT_MS` / `LOCAL_SIM_CACHE_DIR` / `LOCAL_SIM_STATE_CHECK` | `off` / `500` / `data/local-sim` / `1` | `shadow` (simulate mode only): local LiteSVM simulation of every pair tx next to the RPC one, compared in `local_simulation` rows; see "Local full-transaction simulation". |
 
 All variables, with placeholders, are listed in [`deploy/.env.example`](deploy/.env.example).
 
@@ -128,7 +129,8 @@ another in the same loop and share one `RiskGuard`, so there is still exactly on
 - Upgrade guard also watches every upgradeable program of the pair venues (PumpSwap, pump fees = FeeConfig owner,
   DLMM, SPL Token, Token-2022; Memo is immutable); shred feeds flag txs touching ≥ 2 MAX pools
   (`shred:max:arb` wakes the loop, requote + hint latency marker).
-- Research / shadow tools: `src/research/` (`COMPETITOR.md`, `SHADOW.md`, `shadow-run.ts`, `report.ts`).
+- Research / shadow tools: `src/research/` (`COMPETITOR.md`, `SHADOW.md`, `shadow-run.ts`, `report.ts`,
+  `local-vs-rpc.ts`).
 
 ## Safety defaults
 
@@ -260,6 +262,53 @@ src/feeds/              optional ERPC infrastructure, all env-driven (src/feeds/
   shreds-udp-capture.ts record raw packets (arrival ns + source) to a capture file for offline replay
   http.ts               keep-alive undici fetch for RPC_URL / SEND_RPC_URL
   signal.ts             ChangeSignal (coalescing wake-up)
+
+## Local full-transaction simulation (`LOCAL_SIM=shadow`, simulate mode only)
+
+The RPC can only simulate a slot ~114–160 ms after our processed gRPC update for it, and floor-clearing candidates
+were gone by then. `LOCAL_SIM=shadow` adds a local simulation of the **exact transaction** the engine would send
+(same message bytes, same snapshot it was quoted on), runs it next to every pre / final RPC simulation (forced latency
+probes included), and writes one `local_simulation` ledger row per comparison. **The RPC simulation stays the only
+gate in this phase. No decision changes.** A faster check does not mean a won race. It only moves the verdict earlier.
+
+What the local simulation executes (`src/engine/local-sim.ts`, worker `src/engine/local-sim-worker.mjs`):
+- **Whole tx in LiteSVM**: compute-budget ixs, both swap legs with every CPI (token transfers, Token-2022, Memo,
+  event self-CPIs), account writability, the tx's CU limit, atomic failure. The real **mainnet binaries** are loaded
+  from programdata: PumpSwap, pump fees, Meteora DLMM, SPL Token, Token-2022, ATA, Memo. SPL Token on mainnet is the
+  upgradeable p-token program, so LiteSVM's bundled SPL programs are never used. Mainnet's **feature set** is read from
+  the feature accounts. Binaries are cached per deploy slot (`LOCAL_SIM_CACHE_DIR`). The deploy slot is re-checked
+  every `UPGRADE_CHECK_MS`; a change refuses every simulation until the new binary is loaded.
+- **Accounts**: every account the message references must be in the snapshot (or explicitly verified non-existent),
+  or be a loaded program, builtin or provided sysvar. Otherwise the run is **refused** with the missing keys, which
+  join the live set for the next snapshot. A tx is never simulated against a default account. The live set gains the
+  user wallet (fee payer), each DLMM reserve X/Y and oracle, and both event authorities. Static (never in the
+  snapshot): program binaries (deploy-slot checked), Rent (from chain), lookup tables (refetched each check).
+- **Sysvars**: Clock = snapshot slot + the snapshot Clock account's unix timestamp / epoch (DLMM fees depend on it).
+  Rent comes from chain.
+- **Signatures / blockhash**: sigverify is off (no keypair in simulate mode). Instead the required signers must be
+  exactly `[user]` (writable fee payer). LiteSVM cannot know mainnet blockhashes, so its check is off, as with the RPC
+  simulation's `replaceRecentBlockhash`. Instead the tx's blockhash must be the one `BlockhashCache` handed out, at
+  most 60 s old.
+- **Containment**: one child process with a per-call deadline (`LOCAL_SIM_TIMEOUT_MS`, default 500). A hang or abort
+  kills only the worker. It is respawned; meanwhile runs are refused.
+- **LiteSVM build**: `litesvm-local-sim` (= `litesvm@1.6.2`, an aliased dependency). The RISE oracle keeps
+  `litesvm@0.8.0`. 0.8.0 aborts the process (`std::bad_alloc`) in the first full GC after any successful BPF tx that
+  logs (reproduced with LiteSVM's own Memo program), i.e. every ~15–300 simulations in a long-running worker. 1.6.2
+  does not. VMs are recycled every 4,000 `setAccount` calls (bounds native memory), with a pre-built spare swapped in.
+
+Each row holds both results (ok / error / Δ wSOL / Δ token / profit / CU, RPC context slot, catch-up wait), the
+**agreement class** and timings (data arrival → local verdict vs data arrival → RPC verdict). Agreement means both
+executed with Δ wSOL and Δ token equal to the unit, or both failed with the same error. Otherwise the row is
+`mismatch-delta`, `-outcome` or `-error`. Rows are split by **RPC context slot == snapshot slot**: a later RPC slot
+can hold newer pool state. For a mismatch the tx's writable accounts are re-read at ≥ the RPC sim slot
+(`LOCAL_SIM_STATE_CHECK`). `state-changed` means an account differs (explained by a state change), `same-state` means
+a real disagreement to investigate. `local-vs-rpc.ts --blocks N` lists the in-slot tx order for unexplained mismatches.
+
+```bash
+NODE_USE_ENV_PROXY=1 npx tsx src/research/local-sim-validate.ts --sizes 0.01,0.05   # exact-quote + min-out+1 checks vs mainnet
+MODE=simulate PAIRS=max LOCAL_SIM=shadow SHADOW_FORCE_SIM_MS=1000 npx tsx src/research/shadow-run.ts
+npx tsx src/research/local-vs-rpc.ts data/shadow/ledger.jsonl                        # agreement %, latency, speedup
+```
 
 ## Running on the ERPC VPS
 

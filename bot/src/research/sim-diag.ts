@@ -18,7 +18,7 @@ import { RateLimitedRpc } from "./rpc.js";
 
 type Row = Record<string, unknown> & { type: string; ts: string };
 
-const poolsFor = (route: string): string[] => {
+export const poolsFor = (route: string): string[] => {
   const alias = route.split(":")[1] ?? "";
   const dlmm = MAX_DLMM_POOLS.find((p) => p.address.startsWith(alias))?.address;
   return [MAX_PUMPSWAP_POOL_DEFAULT, ...(dlmm ? [dlmm] : [])];
@@ -26,7 +26,7 @@ const poolsFor = (route: string): string[] => {
 
 interface BlockTx { signature: string; payer: string; err: boolean; pools: string[]; index: number }
 
-async function poolTxsInBlock(rpc: RateLimitedRpc, slot: number, pools: string[]): Promise<BlockTx[] | "skipped" | "unavailable"> {
+export async function poolTxsInBlock(rpc: RateLimitedRpc, slot: number, pools: string[]): Promise<BlockTx[] | "skipped" | "unavailable"> {
   try {
     const b = await rpc.call<{ transactions: { transaction: { signatures: string[]; accountKeys: { pubkey: string; writable: boolean }[] }; meta: { err: unknown } | null }[] } | null>(
       "getBlock", [slot, { encoding: "json", transactionDetails: "accounts", rewards: false, maxSupportedTransactionVersion: 1, commitment: "confirmed" }]);

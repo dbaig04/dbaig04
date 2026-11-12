@@ -21,6 +21,7 @@ import { RateLimitedRpc } from "./rpc.js";
 import { describeRpc, feedHealth, freshnessLines, preflightLines, probeRpc, rpcInfo } from "./feed-health.js";
 import { compare, renderShadowMd, summarizeTicks, untakenOpportunities } from "./shadow-report.js";
 import type { CompetitorArb } from "./competitors.js";
+import { createLocalSim } from "../engine/local-sim.js";
 
 export function untakenLines(ticks: PairTickInfo[], arbs: CompetitorArb[]): string[] {
   const un = untakenOpportunities(ticks, arbs);
@@ -53,9 +54,11 @@ async function main() {
   // ERPC feeds when configured (GRPC_ENDPOINT, SHREDS_UDP_PORT / SHREDSTREAM_ENDPOINT): event-driven
   // ticks on gRPC account updates and shred hints, RPC polling as fallback. Else plain polling.
   const infra = setupInfra(cfg, conn, console.log, { onShredsUdpSummary: (x) => ledger.append("latency", x), pairWatch: [maxShredWatch()] });
+  // LOCAL_SIM=shadow: local full-tx LiteSVM simulation next to every RPC simulation (ledger "local_simulation")
+  const localSim = await createLocalSim(cfg, conn);
   const engine = new PairEngine({
     conn, cfg, ledger, user, pair: { ...spec, lookupTables }, stateProvider: infra.stateProvider, pending: infra.pending,
-    forceSimEveryMs: Number(process.env.SHADOW_FORCE_SIM_MS ?? 20_000),
+    forceSimEveryMs: Number(process.env.SHADOW_FORCE_SIM_MS ?? 20_000), localSim,
     onTick: (i) => { rec.record(i); ticks.push(i); },
   });
   const tipsPath = process.env.JITO_TIPS_JSON;
@@ -110,7 +113,7 @@ async function main() {
   const pre = preflightLines(feedHealth(rpcProbe, infra.grpc, infra.shredsUdp), preSec);
   for (const l of pre) console.log(`preflight: ${l}`);
   console.log(`preflight: competitor collection ${rps} req/s via ${rpcI.isPublic ? "PUBLIC RPC" : `private host ${rpcI.host}`}; simulation and account reads via the same RPC`);
-  if (process.env.PREFLIGHT_ONLY === "1") { infra.close(); engine.close(); process.exit(0); }
+  if (process.env.PREFLIGHT_ONLY === "1") { infra.close(); engine.close(); localSim?.close(); process.exit(0); }
   watcher.start();
   let stopping = false;
   process.on("SIGINT", () => { stopping = true; });
@@ -139,6 +142,7 @@ async function main() {
   await watcher.poll();
   engine.close();
   infra.close();
+  localSim?.close();
   write(false);
   console.log(`shadow done: ${ticks.length} ticks, ${watcher.arbs.length} competitor arbs; report ${mdPath}`);
   if (process.env.SHADOW_PRINT === "1") console.log("\n" + readFileSync(mdPath, "utf8"));

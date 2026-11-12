@@ -17,6 +17,7 @@ import { MeteoraDlmm } from "./meteora/index.js";
 import { makeReadConnection, setupInfra } from "./feeds/index.js";
 import { keepAliveFetch } from "./feeds/http.js";
 import { AlternatingSender } from "./engine/delivery-compare.js";
+import { createLocalSim } from "./engine/local-sim.js";
 
 export async function createVenues(conn: Connection, _cfg: Config): Promise<{ rise: RiseVenue; dlmm: DlmmVenue }> {
   // Venues quote synchronously from snapshots fed via StateSource.update(). RiseNative
@@ -67,6 +68,8 @@ async function createPairEngines(cfg: Config, conn: Connection, d: { ledger: Led
     if (!r.value) throw new Error(`PAIR_LOOKUP_TABLES: ${k} not found`);
     alts.push(r.value);
   }
+  // LOCAL_SIM=shadow (simulate mode only): one local full-tx simulator shared by the pair engines
+  const localSim = cfg.pairs.enabled.includes("max") ? await createLocalSim(cfg, conn) : undefined;
   for (const name of cfg.pairs.enabled) {
     if (name !== "max") continue;
     const spec = maxPairSpec(); // MAX_PUMPSWAP_POOL / MAX_DLMM_POOLS (src/pumpswap/pools.ts); default all three DLMM routes
@@ -75,7 +78,7 @@ async function createPairEngines(cfg: Config, conn: Connection, d: { ledger: Led
     out.push(new PairEngine({
       conn, cfg, ledger: d.ledger, risk: d.risk, sender: d.sender, preparer: d.preparer, user,
       pair: { ...spec, lookupTables: alts }, stateProvider: d.infra.stateProvider, pending: d.infra.pending,
-      forceSimEveryMs: cfg.pairs.forceSimMs,
+      forceSimEveryMs: cfg.pairs.forceSimMs, localSim,
     }));
   }
   return out;
