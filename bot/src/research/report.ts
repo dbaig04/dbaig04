@@ -59,10 +59,16 @@ export function walletStats(txs: TxAnalysis[], sigs: Sig[]) {
   const multi = [...slots.values()].filter((g) => g.length > 1);
   let swapFirst = 0, swapNotFirst = 0, multiWithSwap = 0, multiNoSwap = 0, highestPrioSwap = 0, idx = 0;
   const identicalRoute: number[] = [];
+  let allSameBody = 0, prioDiffer = 0, markerDiffer = 0, nonceAcctDiffer = 0, blockhashSame = 0;
   for (const g of multi) {
     const sw = g.filter((t) => t.swapped && t.success);
     const sameData = new Set(g.map((t) => t.programIxData.map((d) => d.hex.slice(10)).join("|"))).size;
     identicalRoute.push(sameData);
+    if (sameData === 1) allSameBody++;
+    if (new Set(g.map((t) => t.priorityFee)).size > 1) prioDiffer++;
+    if (new Set(g.map((t) => markerTag(t) ?? "-")).size > 1) markerDiffer++;
+    if (new Set(g.map((t) => t.nonce?.account)).size === g.length) nonceAcctDiffer++;
+    if (new Set(g.map((t) => t.recentBlockhash)).size === 1) blockhashSame++;
     if (!sw.length) { multiNoSwap++; continue; }
     multiWithSwap++;
     const withIdx = g.map((t) => ({ t, i: bySig.get(t.signature)?.transactionIndex })).filter((x) => x.i !== undefined) as { t: TxAnalysis; i: number }[];
@@ -74,6 +80,10 @@ export function walletStats(txs: TxAnalysis[], sigs: Sig[]) {
     const maxPrio = Math.max(...g.map((t) => t.priorityFee));
     if (sw.some((t) => t.priorityFee === maxPrio)) highestPrioSwap++;
   }
+  // repeated route bodies (program ix data minus tag + CU field) across the sample
+  const bodies = groupBy(w.filter((t) => t.programIxData[0]), (t) => t.programIxData.map((d) => d.hex.slice(10)).join("|"));
+  const repeatedBodies = [...bodies.values()].filter((g) => g.length > 1);
+  const bodyRepeat = { distinct: bodies.size, repeated: repeatedBodies.length, txsInRepeated: sum(repeatedBodies.map((g) => g.length)), slotSpread: q(repeatedBodies.map((g) => g[g.length - 1].slot - g[0].slot)), repeatedWithSwap: repeatedBodies.filter((g) => g.some((t) => t.swapped && t.success)).length };
   // ix data: tag byte and the u32 after it vs the tx's CU limit
   const tags = groupBy(w.filter((t) => t.programIxData[0]), (t) => t.programIxData[0].hex.slice(0, 2));
   const cuMatch = w.filter((t) => t.programIxData[0] && t.cuLimit !== undefined && Buffer.from(t.programIxData[0].hex, "hex").readUInt32LE(1) === t.cuLimit).length;
@@ -120,10 +130,11 @@ export function walletStats(txs: TxAnalysis[], sigs: Sig[]) {
     clusters: {
       slots: slots.size, sizes: q(clusterSizes), multi: multi.length, txsInMulti: sum(multi.map((g) => g.length)),
       multiWithSwap, multiNoSwap, orderKnown: idx, swapFirst, swapNotFirst, highestPrioSwap,
-      distinctRouteBodiesPerCluster: q(identicalRoute),
+      distinctRouteBodiesPerCluster: q(identicalRoute), allSameBody, prioDiffer, markerDiffer, nonceAcctDiffer, blockhashSame,
     },
     ixTags: Object.fromEntries([...tags.entries()].map(([k, v]) => [k, { n: v.length, ok: v.filter((t) => t.success).length, swapped: v.filter((t) => t.swapped).length }])),
     cuFieldMatches: { match: cuMatch, of: withData },
+    bodyRepeat,
     markers: Object.fromEntries([...markers.entries()].map(([k, v]) => [k, { n: v.length, ok: v.filter((t) => t.success).length, swapped: v.filter((t) => t.swapped && t.success).length, medianPrio: quantile(v.map((t) => t.priorityFee), 0.5) }])),
     routePrograms: Object.fromEntries([...groupBy(swapped.flatMap((t) => t.legs.map((l) => l.program)), (x) => x).entries()].map(([k, v]) => [k, v.length])),
     hops: q(swapped.map((t) => t.legs.length)),

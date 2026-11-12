@@ -89,15 +89,23 @@ export class PumpSwapPool implements SwapVenue {
 
   /** Returns true if the raw bytes of `k` changed (and records them). */
   private changed(k: PublicKey, a: AccountInfo<Buffer>): boolean {
-    const s = k.toBase58();
+    const s = this.s(k);
     const old = this.raw.get(s);
     if (old && old.equals(a.data)) return false;
     this.raw.set(s, Buffer.from(a.data));
     return true;
   }
 
+  /** base58 of keys used on every update (encoding costs a few µs each) */
+  private b58 = new WeakMap<PublicKey, string>();
+  private s(k: PublicKey): string {
+    let v = this.b58.get(k);
+    if (v === undefined) this.b58.set(k, (v = k.toBase58()));
+    return v;
+  }
+
   update(slot: number, infos: Map<string, AccountInfo<Buffer> | null>): void {
-    const get = (k: PublicKey) => infos.get(k.toBase58()) ?? null;
+    const get = (k: PublicKey) => infos.get(this.s(k)) ?? null;
     const pa = get(this.pool);
     if (!pa) throw new Error(`${this.name}: pool account missing from snapshot`);
     if (!pa.owner.equals(PumpSwapPool.PROGRAM) && !pa.owner.equals(PublicKey.default)) throw new Error(`${this.name}: pool not owned by pump_amm`);
@@ -145,7 +153,7 @@ export class PumpSwapPool implements SwapVenue {
     }
     // buyback recipient ATA: pick the first candidate that exists, then keep fetching only that one
     if (this.buybackAta) {
-      if (infos.has(this.buybackAta.toBase58()) && !get(this.buybackAta)) this.buybackAta = null;
+      if (infos.has(this.s(this.buybackAta)) && !get(this.buybackAta)) this.buybackAta = null;
     } else {
       this.buybackAta = this.buybackCandidates.find((k) => !!get(k)) ?? null;
     }
@@ -216,22 +224,31 @@ export class PumpSwapPool implements SwapVenue {
   }
 
   /**
-   * Advance cached reserves as if the quoted trade executed (for quoting a second trade on this
-   * pool in the same tx). Vault/bucket bookkeeping per trade_v2: buy adds debit - buyback to the
-   * quote vault and protocol (- buyback) + creator fees to the buckets; sell removes out + buyback.
+   * Advance cached state as if the quoted trade executed now (for quoting a second trade on this
+   * pool in the same tx). trade_v2 bookkeeping, verified against simulated post-state:
+   *   buy : base vault -= out; quote vault += debit - buyback
+   *   sell: base vault += in;  quote vault -= out + buyback
+   *   both: buckets += (protocol - buyback, creator) and virtual_quote_reserves -= the same amount,
+   *         so the curve's effective quote reserve only moves by net+lp (buy) / gross-lp (sell).
+   * (virtual + protocol_fees + creator_fees is constant across trades.)
    */
   applyQuote(q: SwapQuote): void {
     const c = q.ctx as PumpSwapQuoteCtx;
     const p = this.poolState!;
+    const kept = c.r.protocolFee - c.r.buybackFee;
     if (c.side === "buy") {
       this.baseReserve -= c.r.baseOut;
       this.quoteVault += c.r.vaultIn;
-      this.poolState = { ...p, protocolFees: p.protocolFees + c.r.protocolFee - c.r.buybackFee, creatorFees: p.creatorFees + c.r.coinCreatorFee };
     } else {
       this.baseReserve += q.netIn;
       this.quoteVault -= c.r.vaultOut;
-      this.poolState = { ...p, protocolFees: p.protocolFees + c.r.protocolFee - c.r.buybackFee, creatorFees: p.creatorFees + c.r.coinCreatorFee };
     }
+    this.poolState = {
+      ...p,
+      protocolFees: p.protocolFees + kept,
+      creatorFees: p.creatorFees + c.r.coinCreatorFee,
+      virtualQuoteReserves: p.virtualQuoteReserves - kept - c.r.coinCreatorFee,
+    };
     this.stateVersion++;
   }
 

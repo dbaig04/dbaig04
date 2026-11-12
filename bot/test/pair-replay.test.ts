@@ -49,16 +49,18 @@ function moveCp(fx: Fx, side: "buy" | "sell", lamports: bigint) {
 }
 
 test("replay: two-stage == dense exact brute force on real snapshots and after synthetic competitor swaps", () => {
-  const moves: ["buy" | "sell" | null, bigint][] = [[null, 0n], ["buy", 2_000_000_000n], ["sell", 2_000_000_000n], ["buy", 8_000_000_000n], ["sell", 8_000_000_000n], ["buy", 25_000_000_000n], ["sell", 25_000_000_000n]];
+    // the MAX round trip is ~8-13% out of the money at rest (both pools' fees + DLMM spread), so only
+  // large competitor swaps (~12% PumpSwap move: ~150 SOL on a ~1,200 SOL pool) open an arb
+  const moves: ["buy" | "sell" | null, bigint][] = [[null, 0n], ["buy", 2_000_000_000n], ["sell", 2_000_000_000n], ["buy", 80_000_000_000n], ["sell", 80_000_000_000n], ["buy", 150_000_000_000n], ["sell", 150_000_000_000n], ["buy", 300_000_000_000n]];
   let compared = 0, feasible = 0, skips = 0;
   for (const fx of fixtures) {
     for (const [side, amt] of moves) {
       const v = side ? moveCp(fx, side, amt) : load(fx);
       const venues = { a: v.pumpswap, b: v.dlmm };
-      for (const dir of PAIR_DIRECTIONS) {
+      for (const [dir, noBoundSkip] of PAIR_DIRECTIONS.flatMap((d) => [[d, false], [d, true]] as const)) {
         const bf = bruteForcePair(dir, venues, params, 2_000, 200);
         if (!bf) continue;
-        const two = searchPairDirection(dir, venues, params);
+        const two = searchPairDirection(dir, venues, params, 0, { noBoundSkip });
         if (two.skipped) {
           const net = bf.gross - chooseExecutionFees(bf.gross, policy).totalLamports;
           assert.ok(net < params.profitFloor, `${fx.slot} ${side}${amt} ${dir}: skipped but brute nets ${net}`);
@@ -72,7 +74,7 @@ test("replay: two-stage == dense exact brute force on real snapshots and after s
       }
     }
   }
-  assert.ok(compared >= 4, `compared ${compared}`);
+  assert.ok(compared >= 20, `compared ${compared}`);
   assert.ok(feasible >= 1, "large competitor swaps should open a floor-clearing arb");
   assert.ok(skips >= 1);
 });

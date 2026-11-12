@@ -231,6 +231,25 @@ test("instruction accounts, flags and data match the research wallet's on-chain 
   assert.equal(n, 2);
 });
 
+test("applyQuote: trade_v2 bookkeeping keeps virtual + buckets constant; effective reserve moves by net+lp / gross-lp", () => {
+  const v = venue();
+  const inv = () => v.poolState!.virtualQuoteReserves + v.poolState!.protocolFees + v.poolState!.creatorFees;
+  const i0 = inv();
+  const Q0 = v.quoteReserve();
+  const b = v.quoteExactIn("buy", 2_000_000_000n)!;
+  const rb = (b.ctx as PumpSwapQuoteCtx).r as any;
+  v.applyQuote(b);
+  assert.equal(inv(), i0);
+  assert.equal(v.quoteReserve() - Q0, rb.netQuote + rb.lpFee);
+  const Q1 = v.quoteReserve();
+  const s = v.quoteExactIn("sell", b.out)!;
+  const rs = (s.ctx as PumpSwapQuoteCtx).r as any;
+  v.applyQuote(s);
+  assert.equal(inv(), i0);
+  assert.equal(Q1 - v.quoteReserve(), rs.grossQuote - rs.lpFee);
+  assert.ok(s.out < b.netIn);
+});
+
 test("edge cases: zero, dust, u64 bounds, reserve exhaustion, disabled flags, cashback pools", () => {
   const v = venue();
   assert.equal(v.quoteExactIn("buy", 0n), null);

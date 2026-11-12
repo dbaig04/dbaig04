@@ -131,3 +131,10 @@ export function renderShadowMd(o: { title: string; startedAt: string; minutes: n
   for (const n of o.notes) L.push(n);
   return L.join("\n") + "\n";
 }
+
+/** Opportunity ticks (floor-clearing, non-forced) with no competitor arb in the same direction within `window` slots after. */
+export function untakenOpportunities(ticks: PairTickInfo[], arbs: CompetitorArb[], window = 25) {
+  const opp = ticks.filter((t) => t.plan && !t.forced);
+  const untaken = opp.filter((t) => !arbs.some((a) => a.direction === DIR_MAP[t.plan!.direction] && a.slot > t.slot && a.slot <= t.slot + window));
+  return { opportunityTicks: opp.length, untaken: untaken.map((t) => ({ slot: t.slot, direction: t.plan!.direction, grossIn: String(t.plan!.grossIn), expected: String(t.plan!.expectedProfit), simOk: t.sim?.ok ?? null, simReason: t.sim?.reason })) };
+}

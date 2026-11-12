@@ -15,12 +15,18 @@ export function binArrayBitmapExtensionPda(lbPair: PublicKey = POOL): PublicKey 
   return PublicKey.findProgramAddressSync([Buffer.from("bitmap"), lbPair.toBuffer()], PROGRAM)[0];
 }
 
-// PDA derivation is ~0.1-0.5 ms; cache per (lb_pair, index).
+// PDA derivation is ~0.1-0.5 ms; cache per (lb_pair, index). Keyed by the PublicKey object first
+// (no base58 encoding on the hot path), then by its base58 string.
 const binArrayCache = new Map<string, Map<number, PublicKey>>();
+const binArrayCacheByObj = new WeakMap<PublicKey, Map<number, PublicKey>>();
 export function binArrayPda(index: number, lbPair: PublicKey = POOL): PublicKey {
-  const pk = lbPair.toBase58();
-  let m = binArrayCache.get(pk);
-  if (!m) binArrayCache.set(pk, (m = new Map()));
+  let m = binArrayCacheByObj.get(lbPair);
+  if (!m) {
+    const pk = lbPair.toBase58();
+    m = binArrayCache.get(pk);
+    if (!m) binArrayCache.set(pk, (m = new Map()));
+    binArrayCacheByObj.set(lbPair, m);
+  }
   const c = m.get(index);
   if (c) return c;
   const b = Buffer.alloc(8);

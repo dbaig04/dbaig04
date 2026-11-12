@@ -1,7 +1,7 @@
 // Live validation of PumpSwapPool quotes (and PumpSwap <-> DLMM round trips) against mainnet
 // simulateTransaction. Read-only: simulations use sigVerify:false and replaceRecentBlockhash:true.
 //
-//   NODE_USE_ENV_PROXY=1 npx tsx src/pumpswap/validate.ts [--no-single] [--no-roundtrip] [--dlmm <pool>] [--write-fixtures]
+//   NODE_USE_ENV_PROXY=1 npx tsx src/pumpswap/validate.ts [--no-single] [--no-samepool] [--no-roundtrip] [--dlmm <pool>] [--only-buy a,b] [--write-fixtures]
 //
 // Single-venue cases: snapshot pool/vaults/mint/global/fee config + the user's accounts, quote, build
 // the v2 ix with minOut = quote.out, simulate, compare user balance deltas, pool vault deltas and the
@@ -23,7 +23,7 @@ import { decodeSwapEvent } from "../meteora/events.js";
 import { decodeClock } from "../meteora/layout.js";
 import { SYSVAR_CLOCK } from "../meteora/pda.js";
 import { PumpSwapPool, PumpSwapQuoteCtx } from "./index.js";
-import { tokenAmount } from "./layout.js";
+import { decodePool, tokenAmount } from "./layout.js";
 import { pumpEventsFromLogs } from "./events.js";
 import type { SwapQuote, SwapSide } from "../types.js";
 
@@ -220,6 +220,44 @@ async function roundTrip(dir: "pump->dlmm" | "dlmm->pump", dlmm: DlmmSwapVenue, 
   return { dir, solIn, note: "state kept changing; not scored" };
 }
 
+/** Two PumpSwap trades in one tx (buy+buy, buy+sell): the 2nd is quoted on applyQuote()'d state. */
+async function samePool(kind: "buy+buy" | "buy+sell", solIn: bigint): Promise<Row> {
+  const user = BUYER;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const u = venue.userAccounts(user);
+    const pre = await snapshotFor([venue], [u.base, u.quote]);
+    const q1 = venue.quoteExactIn("buy", solIn)!;
+    const v2 = Object.assign(Object.create(Object.getPrototypeOf(venue)), venue) as PumpSwapPool;
+    v2.applyQuote(q1);
+    const side2: SwapSide = kind === "buy+buy" ? "buy" : "sell";
+    const amt2 = kind === "buy+buy" ? solIn : q1.out;
+    const q2 = v2.quoteExactIn(side2, amt2)!;
+    const v3 = Object.assign(Object.create(Object.getPrototypeOf(v2)), v2) as PumpSwapPool;
+    v3.applyQuote(q2);
+    const ixs = [ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }), ...venue.swapExactInIxs(user, "buy", solIn, q1.out, q1), ...v2.swapExactInIxs(user, side2, amt2, q2.out, q2)];
+    const p = venue.poolState!;
+    const sim = await simulateIxs(user, ixs, [u.quote, u.base, venue.pool, p.poolBaseTokenAccount, p.poolQuoteTokenAccount]);
+    const evs = pumpEventsFromLogs(sim.logs);
+    const stable = !sim.err && evs[0].poolBaseTokenReserves === venue.baseReserve && evs[0].poolQuoteTokenReserves === venue.quoteVault && evs[0].virtualQuoteReserves === p.virtualQuoteReserves;
+    if (!stable) {
+      console.error(`  same-pool ${kind}: pool moved (or ${j(sim.err)}), retry`);
+      continue;
+    }
+    const post = decodePool(sim.accounts[2]!);
+    const dW = tokenAmount(sim.accounts[0]!) - tokenAmount(pre.infos.get(u.quote.toBase58())!.data);
+    const dM = tokenAmount(sim.accounts[1]!) - tokenAmount(pre.infos.get(u.base.toBase58())!.data);
+    const qW = kind === "buy+buy" ? -q1.netIn - q2.netIn : q2.out - q1.netIn;
+    const qM = kind === "buy+buy" ? q1.out + q2.out : q1.out - q2.netIn;
+    const s3 = v3.poolState!;
+    const stateOk =
+      evs[1].poolBaseTokenReserves === v2.baseReserve && evs[1].poolQuoteTokenReserves === v2.quoteVault && evs[1].virtualQuoteReserves === v2.poolState!.virtualQuoteReserves &&
+      tokenAmount(sim.accounts[3]!) === v3.baseReserve && tokenAmount(sim.accounts[4]!) === v3.quoteVault &&
+      post.protocolFees === s3.protocolFees && post.creatorFees === s3.creatorFees && post.virtualQuoteReserves === s3.virtualQuoteReserves;
+    return { side: `same-pool ${kind}`, amount: solIn, slot: sim.slot, stable, quoteOut: qW, simOut: dW, quoteNetIn: qM, simNetIn: dM, stateOk, match: dW === qW && dM === qM && stateOk, cu: sim.unitsConsumed };
+  }
+  return { side: `same-pool ${kind}`, amount: solIn, note: "pool kept moving; not scored" };
+}
+
 async function main() {
   const rows: Row[] = [];
   const log = (r: Row) => {
@@ -255,6 +293,7 @@ async function main() {
     log(await single("sell", 1n));
     log(await single("buy", 1_000n));
   }
+  if (!process.argv.includes("--no-samepool") && !only) for (const k of ["buy+buy", "buy+sell"] as const) for (const a of [100_000_000n, 2n * SOL]) log(await samePool(k, a));
   if (!process.argv.includes("--no-roundtrip")) {
     const dlmm = new DlmmSwapVenue({ pool: DLMM_POOL, tokenMint: MAX_MINT });
     for (const dir of ["pump->dlmm", "dlmm->pump"] as const) for (const s of [10_000_000n, 100_000_000n, SOL]) log(await roundTrip(dir, dlmm, s));
