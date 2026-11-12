@@ -28,10 +28,12 @@ test("sim-diag summary: catch-up waits, passes, lost while waiting, gone after w
     r({ type: "simulation", stage: "pre", forced: false, ok: false, reason: "rpc behind snapshot slot 12 after 401 ms", rpcBehindMs: 401, route: "max:6PkALv", direction: "buyBsellA" }),
     r({ type: "simulation", stage: "pre", forced: false, ok: false, reason: "sim error 6004", simSlot: 13, rpcBehindMs: 80, route: "max:5nwdWt", direction: "buyBsellA" }),
     r({ type: "simulation", stage: "pre", forced: false, ok: false, reason: "sim error 6003", simSlot: 14, route: "max:5nwdWt", direction: "buyBsellA" }),
+    r({ type: "simulation", stage: "pre", forced: false, ok: false, reason: "simulate rpc error: failed to simulate transaction: ERPC request failed", rpcError: "ERPC request failed [code -32000]", route: "max:5nwdWt", direction: "buyAsellB" }),
   ];
   const out = simSummary(rows).join("\n");
   assert.match(out, /3 had to wait/);
   assert.match(out, /1 gave up after SIM_SLOT_WAIT_MS/);
-  assert.match(out, /4 pre-simulations -> 1 passed, 1 lost while waiting .*, 1 failed after waiting .*, 1 failed with no wait; 1 final simulations -> 1 passed/);
+  assert.match(out, /5 pre-simulations -> 1 passed, 1 lost while waiting .*, 1 failed after waiting .*, 1 failed with no wait, 1 never simulated \(RPC error\); 1 final simulations -> 1 passed/);
   assert.match(out, /max:6PkALv buyBsellA: 2 pre-sims, 1 passed pre-sim, 1 passed final sim/);
+  assert.match(out, /RPC error x1: ERPC request failed \[code -32000\]/);
 });

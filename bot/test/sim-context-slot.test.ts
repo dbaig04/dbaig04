@@ -37,3 +37,18 @@ test("without minContextSlot behaviour is unchanged", async () => {
   const conn = { async simulateTransaction() { return { context: { slot: 5 }, value: okValue }; } };
   assert.equal((await simulateArb(conn as never, {} as never, plan, base)).ok, true);
 });
+
+test("minContextSlot: a generic provider error (e.g. 'ERPC request failed') is retried within the window, then reported with its code", async () => {
+  let calls = 0;
+  const generic = () => Object.assign(new Error("failed to simulate transaction: ERPC request failed (https://edge.example?api-key=SECRET)"), { code: -32000 });
+  const flaky = { async simulateTransaction() { calls++; if (calls < 3) throw generic(); return { context: { slot: 101 }, value: okValue }; } };
+  const r = await simulateArb(flaky as never, {} as never, plan, { ...base, minContextSlot: 101, slotWaitMs: 1_000, slotWaitPollMs: 1 });
+  assert.equal(r.ok, true);
+  assert.equal(r.rpcErrorRetries, 2);
+  assert.ok(!String(r.rpcError).includes("SECRET"), "URL stripped");
+  const dead = { async simulateTransaction() { throw generic(); } };
+  const r2 = await simulateArb(dead as never, {} as never, plan, { ...base, minContextSlot: 101, slotWaitMs: 20, slotWaitPollMs: 2 });
+  assert.equal(r2.ok, false);
+  assert.match(r2.reason!, /simulate rpc error: .*ERPC request failed.*\[code -32000\] \(after \d+ retries/);
+  assert.ok(!r2.reason!.includes("SECRET"));
+});

@@ -52,6 +52,16 @@ export interface SimResult {
   /** Time spent waiting for the RPC to reach minContextSlot (ms) and the number of retries. */
   rpcBehindMs?: number;
   rpcBehindRetries?: number;
+  /** Retries after other RPC errors while waiting (and the last such error, credential-free). */
+  rpcErrorRetries?: number;
+  rpcError?: string;
+}
+
+/** Message + JSON-RPC code of an RPC error, with any URL stripped (never leak an API key). */
+export function describeRpcError(e: unknown): string {
+  const err = e as { message?: string; code?: number | string };
+  const code = err?.code !== undefined ? ` [code ${err.code}]` : "";
+  return `${String(err?.message ?? e).replace(/https?:\/\/\S+/g, "<url>").slice(0, 200)}${code}`;
 }
 
 const isBehind = (e: unknown) => /minimum context slot|-32016/i.test(String((e as Error)?.message ?? e));
@@ -64,7 +74,8 @@ export type SimPlan = Pick<Plan, "lamportsIn" | "lamportsOut"> & { direction?: s
 export async function simulateArb(conn: SimConnection, tx: VersionedTransaction, plan: SimPlan, p: SimParams): Promise<SimResult> {
   let res;
   const t0 = performance.now();
-  let retries = 0;
+  let retries = 0, otherRetries = 0;
+  let lastErr: string | undefined;
   for (;;) {
     try {
       res = await conn.simulateTransaction(tx, {
@@ -79,16 +90,21 @@ export async function simulateArb(conn: SimConnection, tx: VersionedTransaction,
       break;
     } catch (e) {
       const waited = performance.now() - t0;
-      if (p.minContextSlot !== undefined && isBehind(e) && waited < (p.slotWaitMs ?? 400)) {
-        retries++;
+      const behindErr = isBehind(e);
+      if (!behindErr) lastErr = describeRpcError(e);
+      // With minContextSlot set, retry ANY RPC error within the wait window: simulation is read-only,
+      // and some providers answer an unreached minContextSlot with a generic error instead of -32016.
+      if (p.minContextSlot !== undefined && waited < (p.slotWaitMs ?? 400)) {
+        if (behindErr) retries++; else otherRetries++;
         await new Promise((r) => setTimeout(r, p.slotWaitPollMs ?? 20));
         continue;
       }
-      if (p.minContextSlot !== undefined && isBehind(e)) return { ok: false, reason: `rpc behind snapshot slot ${p.minContextSlot} after ${Math.round(waited)} ms`, rpcBehindMs: Math.round(waited), rpcBehindRetries: retries };
-      return { ok: false, reason: `simulate rpc error: ${(e as Error).message}` };
+      const tried = { rpcBehindMs: Math.round(waited), rpcBehindRetries: retries, rpcErrorRetries: otherRetries, ...(lastErr ? { rpcError: lastErr } : {}) };
+      if (p.minContextSlot !== undefined && (behindErr || !lastErr)) return { ok: false, reason: `rpc behind snapshot slot ${p.minContextSlot} after ${Math.round(waited)} ms`, ...tried };
+      return { ok: false, reason: `simulate rpc error: ${lastErr ?? describeRpcError(e)}${p.minContextSlot !== undefined ? ` (after ${retries + otherRetries} retries, ${Math.round(waited)} ms)` : ""}`, ...(p.minContextSlot !== undefined ? tried : {}) };
     }
   }
-  const behind = retries ? { rpcBehindMs: Math.round(performance.now() - t0), rpcBehindRetries: retries } : {};
+  const behind = retries || otherRetries ? { rpcBehindMs: Math.round(performance.now() - t0), rpcBehindRetries: retries, rpcErrorRetries: otherRetries, ...(lastErr ? { rpcError: lastErr } : {}) } : {};
   const v = res.value;
   const base: SimResult = { ok: false, slot: res.context.slot, err: v.err ?? undefined, unitsConsumed: v.unitsConsumed ?? undefined, logs: v.logs ?? undefined, ...behind };
   if (v.err) return { ...base, reason: `sim error: ${JSON.stringify(v.err)}` };

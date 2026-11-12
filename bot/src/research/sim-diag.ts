@@ -76,7 +76,7 @@ const fmt = (x: number) => (Number.isFinite(x) ? x.toFixed(0) : "-");
  *    (the RPC caught up but the opportunity was gone), failed without waiting.
  */
 export function simSummary(rows: Row[]): string[] {
-  const sims = rows.filter((r) => r.type === "simulation" && r.simSlot !== undefined || (r.type === "simulation" && String(r.reason ?? "").startsWith("rpc behind")));
+  const sims = rows.filter((r) => r.type === "simulation");
   const wait = (r: Row) => Number(r.rpcBehindMs ?? 0);
   const all = sims.map(wait);
   const waited = sims.filter((r) => wait(r) > 0).map(wait);
@@ -85,8 +85,12 @@ export function simSummary(rows: Row[]): string[] {
   const pre = cand.filter((r) => r.stage === "pre");
   const fin = cand.filter((r) => r.stage === "final");
   const lostWaiting = pre.filter((r) => String(r.reason ?? "").startsWith("rpc behind"));
-  const goneAfterWait = pre.filter((r) => !r.ok && wait(r) > 0 && !String(r.reason ?? "").startsWith("rpc behind"));
-  const failNoWait = pre.filter((r) => !r.ok && wait(r) === 0 && !String(r.reason ?? "").startsWith("rpc behind"));
+  const rpcErr = (r: Row) => String(r.reason ?? "").startsWith("simulate rpc error");
+  const notRun = pre.filter(rpcErr);
+  const goneAfterWait = pre.filter((r) => !r.ok && wait(r) > 0 && !String(r.reason ?? "").startsWith("rpc behind") && !rpcErr(r));
+  const failNoWait = pre.filter((r) => !r.ok && wait(r) === 0 && !String(r.reason ?? "").startsWith("rpc behind") && !rpcErr(r));
+  const errKinds = new Map<string, number>();
+  for (const r of sims.filter(rpcErr)) { const k = String(r.rpcError ?? r.reason).slice(0, 90); errKinds.set(k, (errKinds.get(k) ?? 0) + 1); }
   const byRoute = new Map<string, { n: number; preOk: number; finalOk: number }>();
   for (const r of cand) {
     const k = `${String(r.route ?? r.pair ?? "?")} ${String(r.direction ?? "?")}`;
@@ -99,9 +103,10 @@ export function simSummary(rows: Row[]): string[] {
     `RPC catch-up (all ${sims.length} simulations with slot data, incl. latency probes): wait median ${fmt(pct(all, 0.5))} / p95 ${fmt(pct(all, 0.95))} / max ${fmt(all.length ? Math.max(...all) : NaN)} ms; ` +
       `${waited.length} had to wait (median ${fmt(pct(waited, 0.5))} / p95 ${fmt(pct(waited, 0.95))} ms); ${behindRejects.length} gave up after SIM_SLOT_WAIT_MS ("rpc behind").`,
     `Floor-clearing candidates (non-forced): ${pre.length} pre-simulations -> ${pre.filter((r) => r.ok).length} passed, ` +
-      `${lostWaiting.length} lost while waiting (RPC never reached the slot), ${goneAfterWait.length} failed after waiting (RPC caught up, opportunity gone), ${failNoWait.length} failed with no wait; ` +
+      `${lostWaiting.length} lost while waiting (RPC never reached the slot), ${goneAfterWait.length} failed after waiting (RPC caught up, opportunity gone), ${failNoWait.length} failed with no wait, ${notRun.length} never simulated (RPC error); ` +
       `${fin.length} final simulations -> ${fin.filter((r) => r.ok).length} passed.`,
     ...[...byRoute.entries()].map(([k, e]) => `  ${k}: ${e.n} pre-sims, ${e.preOk} passed pre-sim, ${e.finalOk} passed final sim`),
+    ...[...errKinds.entries()].map(([k, n]) => `  RPC error x${n}: ${k}`),
   ];
 }
 
@@ -116,8 +121,13 @@ async function main() {
   const fails = pairFailures(rows);
   console.log(`${fails.length} floor-clearing opportunities with a failed (non-forced) simulation\n`);
   const rpc = new RateLimitedRpc({ rps: Number(process.env.RESEARCH_RPS ?? (info.isPublic ? 0.6 : 5)), url: cfg.rpcUrl });
-  let moved = 0, quiet = 0, unknown = 0, behindN = 0, sameSlot = 0;
+  let moved = 0, quiet = 0, unknown = 0, behindN = 0, sameSlot = 0, notRunN = 0;
   for (const f of fails) {
+    if (f.reason.startsWith("simulate rpc error") || f.reason.startsWith("rpc behind")) {
+      console.log(`${f.route} ${f.direction} expected net ${f.expected}: snapshot slot ${f.snapSlot}: SIMULATION NOT RUN: ${f.reason}\n`);
+      notRunN++;
+      continue;
+    }
     const pools = poolsFor(f.route);
     const from = Math.min(f.snapSlot, f.simSlot), to = Math.max(f.snapSlot, f.simSlot);
     const lines: string[] = [];
@@ -146,7 +156,7 @@ async function main() {
     for (const l of lines) console.log(l);
     console.log(`  => ${verdict}\n`);
   }
-  console.log(`summary: ${fails.length} failed opportunities; sim on older RPC state: ${behindN}; raced within the snapshot slot (likely): ${sameSlot}; pool moved after snapshot slot: ${moved}; no pool tx in between: ${quiet}; unknown: ${unknown}`);
+  console.log(`summary: ${fails.length} failed opportunities; simulation not run (RPC error / behind): ${notRunN}; sim on older RPC state: ${behindN}; raced within the snapshot slot (likely): ${sameSlot}; pool moved after snapshot slot: ${moved}; no pool tx in between: ${quiet}; unknown: ${unknown}`);
 }
 
 if (process.argv[1]?.endsWith("sim-diag.ts")) main().catch((e) => { console.error(String((e as Error).message ?? e).replace(/https?:\/\/\S+/g, "<url>")); process.exit(1); });
