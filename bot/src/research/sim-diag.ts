@@ -74,7 +74,7 @@ async function main() {
   const fails = pairFailures(rows);
   console.log(`${fails.length} floor-clearing opportunities with a failed (non-forced) simulation\n`);
   const rpc = new RateLimitedRpc({ rps: Number(process.env.RESEARCH_RPS ?? (info.isPublic ? 0.6 : 5)), url: cfg.rpcUrl });
-  let moved = 0, quiet = 0, unknown = 0;
+  let moved = 0, quiet = 0, unknown = 0, behindN = 0, sameSlot = 0;
   for (const f of fails) {
     const pools = poolsFor(f.route);
     const from = Math.min(f.snapSlot, f.simSlot), to = Math.max(f.snapSlot, f.simSlot);
@@ -92,14 +92,19 @@ async function main() {
       lines.push(`    slot ${s} (${where}): ${txs.length} pool txs (${txs.filter((t) => !t.err).length} ok, ${txs.filter((t) => t.err).length} failed); ` +
         `${both.length} touched both pools (arb-like) from ${payers.size} payers, ${okBoth.length} succeeded${okBoth.length ? ": " + okBoth.slice(0, 6).map((t) => `#${t.index} ${t.payer.slice(0, 6)}`).join(", ") : ""}`);
     }
-    const verdict = anyAfter ? "POOL MOVED after our snapshot (real but raced / too slow)" : gaps ? "UNKNOWN (blocks unavailable)" : "NO pool tx after our snapshot -> state disagreement or quoting issue";
-    if (anyAfter) moved++; else if (gaps) unknown++; else quiet++;
+    // classify (sim slot vs snapshot slot first: a sim on OLDER state cannot confirm the quote)
+    let verdict: string;
+    if (f.simSlot < f.snapSlot) { verdict = `SIM RAN ON OLDER STATE: RPC was ${f.snapSlot - f.simSlot} slot(s) behind our gRPC snapshot`; behindN++; }
+    else if (anyAfter) { verdict = "POOL MOVED after our snapshot slot (real but raced / too slow)"; moved++; }
+    else if (gaps) { verdict = "UNKNOWN (blocks unavailable)"; unknown++; }
+    else if (f.simSlot === f.snapSlot) { verdict = "SAME SLOT: pool txs in this slot may have landed after our processed update (raced within the slot); order not observable"; sameSlot++; }
+    else { verdict = "NO pool tx after our snapshot -> state disagreement or quoting issue"; quiet++; }
     console.log(`${f.route} ${f.direction} expected net ${f.expected}: snapshot slot ${f.snapSlot}, sim slot ${f.simSlot} (${f.simSlot - f.snapSlot >= 0 ? "+" : ""}${f.simSlot - f.snapSlot} slots, ${f.ms} ms later), ${f.stage}-sim: ${f.reason}`);
     for (const l of f.logs) console.log(`    log: ${l.slice(0, 160)}`);
     for (const l of lines) console.log(l);
     console.log(`  => ${verdict}\n`);
   }
-  console.log(`summary: ${fails.length} failed opportunities; pool moved after snapshot: ${moved}; no pool tx in between: ${quiet}; unknown: ${unknown}`);
+  console.log(`summary: ${fails.length} failed opportunities; sim on older RPC state: ${behindN}; raced within the snapshot slot (likely): ${sameSlot}; pool moved after snapshot slot: ${moved}; no pool tx in between: ${quiet}; unknown: ${unknown}`);
 }
 
 if (process.argv[1]?.endsWith("sim-diag.ts")) main().catch((e) => { console.error(String((e as Error).message ?? e).replace(/https?:\/\/\S+/g, "<url>")); process.exit(1); });

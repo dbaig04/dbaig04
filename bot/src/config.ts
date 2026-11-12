@@ -168,6 +168,8 @@ export interface Config {
   /** Simulated vs expected profit tolerance. */
   simToleranceLamports: bigint;
   simToleranceBps: bigint;
+  /** Max ms to wait for the simulation RPC to reach the snapshot slot (minContextSlot) before rejecting. */
+  simSlotWaitMs: number;
   /** CU headroom multiplier over simulated usage, in bps (11500 = 1.15x). */
   cuHeadroomBps: bigint;
   pollIntervalMs: number;
@@ -288,6 +290,7 @@ export function loadConfig(e: NodeJS.ProcessEnv = process.env): Config {
       legSlippageBps: big("LEG_SLIPPAGE_BPS", 0n),
       simToleranceLamports: big("SIM_TOLERANCE_LAMPORTS", 20_000n),
       simToleranceBps: big("SIM_TOLERANCE_BPS", 1_000n),
+      simSlotWaitMs: int("SIM_SLOT_WAIT_MS", 400, 0, 5_000) ?? 400,
       cuHeadroomBps: big("CU_HEADROOM_BPS", 11_500n),
       pollIntervalMs: num("POLL_INTERVAL_MS", 1000),
       ledgerPath: env("LEDGER_PATH", "data/ledger.jsonl")!,

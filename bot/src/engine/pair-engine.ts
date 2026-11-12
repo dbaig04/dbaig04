@@ -400,6 +400,8 @@ export class PairEngine {
     const simBase = {
       wsolAta: this.wsolAta, riseAta: this.tokenAta, wsolPre: wsol, risePre: tok,
       profitFloorLamports: floor, toleranceLamports: cfg.simToleranceLamports, toleranceBps: cfg.simToleranceBps,
+      // never validate a plan on RPC state older than the snapshot it was quoted on
+      minContextSlot: slot, slotWaitMs: cfg.simSlotWaitMs,
     };
     const simPlan = { lamportsIn: plan.lamportsIn, lamportsOut: plan.lamportsOut };
     const learned = this.cuLearned[cuKey];

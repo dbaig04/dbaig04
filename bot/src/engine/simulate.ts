@@ -21,6 +21,15 @@ export interface SimParams {
   /** In-tx tip (native SOL transfer, Jito). Not visible in Δ wSOL, so it is subtracted explicitly. */
   tipLamports?: bigint;
   commitment?: Commitment;
+  /**
+   * Refuse to simulate on RPC state older than this slot (the slot our quote's snapshot came from).
+   * Without it a lagging RPC simulates on the previous slot's state, which may not yet contain the
+   * trade that opened the gap. The RPC answers "minimum context slot not reached" until it catches
+   * up; we retry every `slotWaitPollMs` for at most `slotWaitMs`, then reject as "rpc behind".
+   */
+  minContextSlot?: number;
+  slotWaitMs?: number;
+  slotWaitPollMs?: number;
 }
 
 export interface SimResult {
@@ -40,7 +49,12 @@ export interface SimResult {
   /** Quote-implied profit at the same fee. */
   expectedProfit?: bigint;
   logs?: string[];
+  /** Time spent waiting for the RPC to reach minContextSlot (ms) and the number of retries. */
+  rpcBehindMs?: number;
+  rpcBehindRetries?: number;
 }
+
+const isBehind = (e: unknown) => /minimum context slot|-32016/i.test(String((e as Error)?.message ?? e));
 
 const abs = (x: bigint) => (x < 0n ? -x : x);
 
@@ -49,18 +63,34 @@ export type SimPlan = Pick<Plan, "lamportsIn" | "lamportsOut"> & { direction?: s
 
 export async function simulateArb(conn: SimConnection, tx: VersionedTransaction, plan: SimPlan, p: SimParams): Promise<SimResult> {
   let res;
-  try {
-    res = await conn.simulateTransaction(tx, {
-      sigVerify: false,
-      replaceRecentBlockhash: true,
-      commitment: p.commitment ?? "processed",
-      accounts: { encoding: "base64", addresses: [p.wsolAta.toBase58(), p.riseAta.toBase58()] },
-    });
-  } catch (e) {
-    return { ok: false, reason: `simulate rpc error: ${(e as Error).message}` };
+  const t0 = performance.now();
+  let retries = 0;
+  for (;;) {
+    try {
+      res = await conn.simulateTransaction(tx, {
+        sigVerify: false,
+        replaceRecentBlockhash: true,
+        commitment: p.commitment ?? "processed",
+        ...(p.minContextSlot !== undefined ? { minContextSlot: p.minContextSlot } : {}),
+        accounts: { encoding: "base64", addresses: [p.wsolAta.toBase58(), p.riseAta.toBase58()] },
+      });
+      // some RPCs ignore minContextSlot: enforce it on the returned context as well
+      if (p.minContextSlot !== undefined && res.context.slot < p.minContextSlot) throw new Error(`minimum context slot not reached (sim slot ${res.context.slot} < ${p.minContextSlot})`);
+      break;
+    } catch (e) {
+      const waited = performance.now() - t0;
+      if (p.minContextSlot !== undefined && isBehind(e) && waited < (p.slotWaitMs ?? 400)) {
+        retries++;
+        await new Promise((r) => setTimeout(r, p.slotWaitPollMs ?? 20));
+        continue;
+      }
+      if (p.minContextSlot !== undefined && isBehind(e)) return { ok: false, reason: `rpc behind snapshot slot ${p.minContextSlot} after ${Math.round(waited)} ms`, rpcBehindMs: Math.round(waited), rpcBehindRetries: retries };
+      return { ok: false, reason: `simulate rpc error: ${(e as Error).message}` };
+    }
   }
+  const behind = retries ? { rpcBehindMs: Math.round(performance.now() - t0), rpcBehindRetries: retries } : {};
   const v = res.value;
-  const base: SimResult = { ok: false, slot: res.context.slot, err: v.err ?? undefined, unitsConsumed: v.unitsConsumed ?? undefined, logs: v.logs ?? undefined };
+  const base: SimResult = { ok: false, slot: res.context.slot, err: v.err ?? undefined, unitsConsumed: v.unitsConsumed ?? undefined, logs: v.logs ?? undefined, ...behind };
   if (v.err) return { ...base, reason: `sim error: ${JSON.stringify(v.err)}` };
   if (!v.unitsConsumed) return { ...base, reason: "sim returned no unitsConsumed" };
   const accs = v.accounts;
