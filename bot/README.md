@@ -301,8 +301,9 @@ Each row holds both results (ok / error / Δ wSOL / Δ token / profit / CU, RPC 
 executed with Δ wSOL and Δ token equal to the unit, or both failed with the same error. Otherwise the row is
 `mismatch-delta`, `-outcome` or `-error`. Rows are split by **RPC context slot == snapshot slot**: a later RPC slot
 can hold newer pool state. For a mismatch the tx's writable accounts are re-read at ≥ the RPC sim slot
-(`LOCAL_SIM_STATE_CHECK`). `state-changed` means an account differs (explained by a state change), `same-state` means
-a real disagreement to investigate. `local-vs-rpc.ts --blocks N` lists the in-slot tx order for unexplained mismatches.
+(`LOCAL_SIM_STATE_CHECK`). `state-changed` means an account differs in a read served at the sim slot (explained by a
+state change), `same-state` means a real disagreement to investigate; a read served at a later slot is inconclusive
+(`state-changed-later-read` / `same-state-later-read`). `local-vs-rpc.ts --blocks N` lists the in-slot tx order for unexplained mismatches.
 
 ```bash
 NODE_USE_ENV_PROXY=1 npx tsx src/research/local-sim-validate.ts --sizes 0.01,0.05   # exact-quote + min-out+1 checks vs mainnet

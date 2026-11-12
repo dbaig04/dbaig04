@@ -390,3 +390,53 @@ test("chain load + upgrade: binaries come from programdata (cached per deploy sl
     assert.match((await sim3.simulate(request(fx, c))).refused ?? "", /overdue/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ---- audit regressions ----
+
+import { stateCheckVerdict, stateCheck } from "../src/engine/local-sim.js";
+
+test("state check: a difference seen only in a read served at a later slot than the RPC sim is inconclusive, not 'state-changed'", async () => {
+  const fx = fixtures[0];
+  const snap = snapshotOf(fx);
+  const key = Object.keys(fx.accounts).find((k) => fx.accounts[k])!;
+  const a = snap.get(key)!;
+  const changed = { ...a, lamports: a.lamports + 1 };
+  // minContextSlot is a lower bound: the RPC may answer at a later slot
+  const conn = (served: number, info: AccountInfo<Buffer>) => ({ async getMultipleAccountsInfoAndContext() { return { context: { slot: served }, value: [info] }; } });
+  const later = await stateCheck(conn(fx.slot + 3, changed) as never, [key], snap, fx.slot);
+  assert.equal(later.atSimSlot, false);
+  assert.equal(stateCheckVerdict(later), "state-changed-later-read");
+  const atSim = await stateCheck(conn(fx.slot, changed) as never, [key], snap, fx.slot);
+  assert.equal(stateCheckVerdict(atSim), "state-changed");
+  assert.equal(stateCheckVerdict(await stateCheck(conn(fx.slot, a) as never, [key], snap, fx.slot)), "same-state");
+  assert.equal(stateCheckVerdict(await stateCheck(conn(fx.slot + 1, a) as never, [key], snap, fx.slot)), "same-state-later-read");
+});
+
+test("upgrade reload: a worker setup failure after the new binaries were loaded does not leave the simulator refusing forever", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ls-cache-"));
+  try {
+    const ch = fakeChain();
+    const sim = new LocalTxSimulator({ conn: ch.conn as never, cacheDir: dir, checkIntervalMs: 0, timeoutMs: 2_000, log: () => undefined });
+    sims.push(sim);
+    await sim.init();
+    const fx = fixtures[0];
+    const c = fx.cases.find((x) => x.variant === "exact")!;
+    const dlmm = ctx.programs.find((p) => p.id.startsWith("LBUZ"))!.id;
+    ch.deploy.set(dlmm, ch.deploy.get(dlmm)! + 1000n);
+    // the first respawn with the new binaries fails (e.g. setup timeout)
+    const s = sim as unknown as { spawn: () => Promise<void> };
+    const orig = s.spawn.bind(sim);
+    let fail = true;
+    s.spawn = async () => { if (fail) { fail = false; throw new Error("setup failed (test)"); } return orig(); };
+    await assert.rejects(sim.check(), /setup failed/);
+    assert.match(sim.staleReason ?? "", /stale/);
+    assert.match((await sim.simulate(request(fx, c))).refused ?? "", /stale/);
+    // next check: deploy slots already match the loaded binaries; the worker is rebuilt and simulations resume
+    await sim.check();
+    await sim.settled();
+    assert.equal(sim.staleReason, null);
+    const r = await sim.simulate(request(fx, c));
+    assert.ok(r.execOk, String(r.refused));
+    assert.equal(r.wsolDelta, BigInt(c.expectWsolDelta));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

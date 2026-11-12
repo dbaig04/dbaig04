@@ -59,7 +59,7 @@ export function summarize(all: LocalRow[]): string[] {
   if (mism.length) {
     out.push(`mismatches: ${mism.length}`);
     for (const [k, v] of countBy(mism, (r) => `${r.agreement.class} | ${r.agreement.sameSlot ? "same slot" : "later slot"} | state check: ${r.stateCheck?.verdict ?? (r.stateCheck?.skipped ? "skipped" : r.stateCheck?.error ? "error" : "none")}`)) out.push(`  ${v} x ${k}`);
-    out.push(`  state check = the tx's writable accounts re-read at >= the RPC sim slot vs our snapshot: "state-changed" (some account differs -> explained by a state change, not a local-sim error), "same-state" (identical at the sim slot -> REAL disagreement, investigate), "same-state-later-read" (identical, read at a later slot).`);
+    out.push(`  state check = the tx's writable accounts re-read at >= the RPC sim slot vs our snapshot: "state-changed" (some account differs, read AT the sim slot -> explained by a state change, not a local-sim error), "same-state" (identical at the sim slot -> REAL disagreement, investigate), "state-changed-later-read" / "same-state-later-read" (read served at a later slot than the sim: inconclusive).`);
     const unexplained = mism.filter((r) => r.stateCheck?.verdict === "same-state");
     for (const r of unexplained.slice(0, 10)) out.push(`  UNEXPLAINED ${r.ts} ${r.route} ${r.direction} ${r.stage} snapshot ${r.snapshotSlot} rpc ${r.rpc.slot}: ${r.agreement.details}`);
     const changed = countBy(mism.flatMap((r) => r.stateCheck?.differ ?? []), (k) => k).slice(0, 6);

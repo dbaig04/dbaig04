@@ -458,11 +458,15 @@ export class LocalTxSimulator {
     if (!conn || !this.ctx) return;
     const slots = await readDeploySlots(conn, this.ctx.programs);
     const changed = this.ctx.programs.filter((p) => p.programData && slots.get(p.id) !== p.deploySlot);
-    if (changed.length) {
-      this.staleReason = `program binary stale: ${changed.map((p) => `${p.id.slice(0, 8)} deploy slot ${p.deploySlot} -> ${slots.get(p.id)}`).join(", ")}`;
-      this.log(`local-sim: ${this.staleReason}; refusing until reloaded`);
-      const programs = await loadPrograms(conn, this.ctx.programs.map((p) => p.id), this.o.cacheDir, (m) => this.log(m));
-      this.ctx = { ...this.ctx, programs };
+    // also retried when an earlier reload loaded the new binaries but its worker setup failed
+    // (ctx already current, staleReason still set): without this the simulator refused forever
+    if (changed.length || this.staleReason) {
+      if (changed.length) {
+        this.staleReason = `program binary stale: ${changed.map((p) => `${p.id.slice(0, 8)} deploy slot ${p.deploySlot} -> ${slots.get(p.id)}`).join(", ")}`;
+        this.log(`local-sim: ${this.staleReason}; refusing until reloaded`);
+        const programs = await loadPrograms(conn, this.ctx.programs.map((p) => p.id), this.o.cacheDir, (m) => this.log(m));
+        this.ctx = { ...this.ctx, programs };
+      }
       await this.spawn();
       this.staleReason = null;
       this.log("local-sim: reloaded upgraded program binaries");
@@ -745,6 +749,16 @@ export async function stateCheck(conn: StateCheckConnection, keys: string[], sna
   return { slot: res.context.slot, differ, checked: keys.length, atSimSlot: res.context.slot === minSlot };
 }
 
+/**
+ * Verdict of a state check. minContextSlot only bounds the read from below: a read served at a later
+ * slot than the RPC sim can see changes made AFTER the sim, so a difference found there does not
+ * explain the mismatch ("state-changed-later-read" = inconclusive, like "same-state-later-read").
+ */
+export function stateCheckVerdict(sc: { differ: string[]; atSimSlot: boolean }): "state-changed" | "state-changed-later-read" | "same-state" | "same-state-later-read" {
+  if (sc.differ.length) return sc.atSimSlot ? "state-changed" : "state-changed-later-read";
+  return sc.atSimSlot ? "same-state" : "same-state-later-read";
+}
+
 // ---------------------------------------------------------------------------------------------
 // shadow orchestration (engine side)
 
@@ -827,7 +841,7 @@ export class LocalSimShadow {
           const t = Date.now();
           try {
             const sc = await stateCheck(conn, keys, run.snapshot, slot);
-            row.stateCheck = { ...sc, verdict: sc.differ.length ? "state-changed" : sc.atSimSlot ? "same-state" : "same-state-later-read", ms: Date.now() - t };
+            row.stateCheck = { ...sc, verdict: stateCheckVerdict(sc), ms: Date.now() - t };
           } catch (e) {
             row.stateCheck = { error: String((e as Error).message).replace(/https?:\/\/\S+/g, "<url>").slice(0, 160) };
           } finally { this.checks--; }
