@@ -52,3 +52,36 @@ export interface Opportunity {
   expectedProfit: bigint;
   txCostLamports: bigint;
 }
+
+// ---------------------------------------------------------------------------
+// Generic two-pool token/SOL arbitrage (added for MAX: PumpSwap <-> Meteora DLMM).
+// The RISE interfaces above stay as they are; new pairs use these.
+
+export const MAX_MINT = "5qaP7oKUqKffwwo5DaEqDoTtsBLMpdbQTxEkCDaTpump"; // "Max coin", Token-2022, 6 decimals
+export const PUMPSWAP_PROGRAM_ID = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA";
+
+/** "buy" = SOL in -> token out, "sell" = token in -> SOL out. */
+export type SwapSide = "buy" | "sell";
+
+export interface SwapQuote {
+  /** Amount received by the user (after all pool, protocol, creator fees and any Token-2022 transfer fee). */
+  out: bigint;
+  /** Actual decrease of the user's input balance (may be < amountIn if the venue rebates part of a fee to the user). */
+  netIn: bigint;
+  /** Opaque per-quote context the ix builder needs (e.g. DLMM bin arrays). */
+  ctx?: unknown;
+}
+
+/** Any SOL/token pool that can quote exactly and synchronously over cached state. */
+export interface SwapVenue extends StateSource {
+  readonly name: string;          // e.g. "pumpswap:Eoe22Hd…", "dlmm:H6Bcgds…"
+  readonly tokenMint: string;
+  /** Changes whenever quote-relevant state changes (used for caching). */
+  quoteKey(): string;
+  /** Exact quote, no I/O. null if the venue would reject the trade. */
+  quoteExactIn(side: SwapSide, amountIn: bigint): SwapQuote | null;
+  /** Instructions for an exact-in swap with on-chain min-out (user's ATAs are assumed to exist). */
+  swapExactInIxs(user: PublicKey, side: SwapSide, amountIn: bigint, minOut: bigint, q: SwapQuote): TransactionInstruction[];
+  /** Program ids whose upgrade must halt trading on this venue. */
+  programIds(): PublicKey[];
+}
