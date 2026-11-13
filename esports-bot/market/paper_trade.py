@@ -40,10 +40,13 @@ def main():
     ap.add_argument("--hold", type=float, default=60, help="timed exit after N s")
     ap.add_argument("--stake", type=float, default=100.0, help="$ notional per trade")
     ap.add_argument("--max-ask", type=float, default=0.95, help="skip if ask above this")
+    ap.add_argument("--kills", type=int, default=3, help="big-event threshold passed to align.py")
+    ap.add_argument("--window", type=float, default=20.0)
+    ap.add_argument("--net", type=int, default=2)
     a = ap.parse_args()
     ov = {k.lower(): v for k, v in (x.split("=", 1) for x in a.map)}
 
-    events, _ = analyse(a.stream, a.prices, a.match_map, ov)
+    events, _ = analyse(a.stream, a.prices, a.match_map, ov, a.kills, a.window, a.net)
     if not events:
         print("no big stream events -> no trades")
     series, _ = load_prices(a.prices, {e["event_slug"] for e in events} or None)
