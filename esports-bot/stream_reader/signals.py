@@ -186,6 +186,9 @@ def classify_feed_line(ln, tint=None):
     m = re.search(r"the(radiant|dire)", low)
     actor = m.group(1) if m else tint
     if "roshan" in low:
+        # "Roshan has roared! He is being attacked by The Dire" is NOT a kill
+        if re.search(r"roar|attack|being", low):
+            return None
         return ("roshan", actor) if actor else None
     m = re.search(r"(radiant|dire)\w*barrack", low)
     if m or "barrack" in low:
