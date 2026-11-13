@@ -1,0 +1,160 @@
+{
+ "dota2-gl-ch1-2026-11-13": {
+  "event_slug": "dota2-gl-ch1-2026-11-13",
+  "title": "Dota 2: GamerLegion vs CyberHero (BO3) - 1win Essence Group B",
+  "start_time": "2026-11-13T10:00:00Z",
+  "outcomes": [
+   "GamerLegion",
+   "CyberHero"
+  ],
+  "pandascore_match_id": 1793321,
+  "pandascore_name": "GL vs CH",
+  "pandascore_status": "running",
+  "teams": [
+   {
+    "name": "GamerLegion",
+    "acronym": "GL",
+    "outcome": "GamerLegion"
+   },
+   {
+    "name": "CyberHero",
+    "acronym": "CH",
+    "outcome": "CyberHero"
+   }
+  ],
+  "match_score": 2.0,
+  "twitch_channel": "1win_dota",
+  "streams": [
+   {
+    "url": "https://www.twitch.tv/1win_dota_ru",
+    "main": false,
+    "language": "ru",
+    "channel": "1win_dota_ru"
+   },
+   {
+    "url": "https://www.twitch.tv/1win_dota",
+    "main": true,
+    "language": "en",
+    "channel": "1win_dota"
+   }
+  ],
+  "updated": "2026-11-13T10:29:21.253Z"
+ },
+ "dota2-playti-huliga-2026-11-13": {
+  "event_slug": "dota2-playti-huliga-2026-11-13",
+  "title": "Dota 2: PlayTime vs HULIGANI (BO3) - DreamLeague Division 2 Playoffs",
+  "start_time": "2026-11-13T10:00:00Z",
+  "outcomes": [
+   "PlayTime",
+   "HULIGANI"
+  ],
+  "pandascore_match_id": 1791797,
+  "pandascore_name": "Upper Bracket Quarterfinal 1: PlayTime vs HULIGANI",
+  "pandascore_status": "running",
+  "teams": [
+   {
+    "name": "PlayTime",
+    "acronym": null,
+    "outcome": "PlayTime"
+   },
+   {
+    "name": "HULIGANI",
+    "acronym": null,
+    "outcome": "HULIGANI"
+   }
+  ],
+  "match_score": 2.0,
+  "twitch_channel": "esl_dota2",
+  "streams": [
+   {
+    "url": "https://www.youtube.com/watch?v=KIbH58bFaJc",
+    "main": false,
+    "language": "en",
+    "channel": "watch?v=kibh58bfajc"
+   },
+   {
+    "url": "https://www.twitch.tv/esl_dota2",
+    "main": true,
+    "language": "en",
+    "channel": "esl_dota2"
+   }
+  ],
+  "updated": "2026-11-13T10:29:21.255Z"
+ },
+ "dota2-z10-xe-2026-11-13": {
+  "event_slug": "dota2-z10-xe-2026-11-13",
+  "title": "Dota 2: Zero Tenacity vs Xipto Esports (BO3) - Esports Pro Circuit  Playoffs",
+  "start_time": "2026-11-13T09:10:00Z",
+  "outcomes": [
+   "Zero Tenacity",
+   "Xipto Esports"
+  ],
+  "pandascore_match_id": 1805035,
+  "pandascore_name": "Upper bracket semifinal 1: Z10 vs XE",
+  "pandascore_status": "running",
+  "teams": [
+   {
+    "name": "Zero Tenacity",
+    "acronym": "Z10",
+    "outcome": "Zero Tenacity"
+   },
+   {
+    "name": "Xipto Esports",
+    "acronym": "XE",
+    "outcome": "Xipto Esports"
+   }
+  ],
+  "match_score": 2.0,
+  "twitch_channel": "epc_en",
+  "streams": [
+   {
+    "url": "https://www.twitch.tv/epc_en",
+    "main": true,
+    "language": "en",
+    "channel": "epc_en"
+   }
+  ],
+  "updated": "2026-11-13T10:29:21.257Z"
+ },
+ "dota2-iac-redjoh-2026-11-13": {
+  "event_slug": "dota2-iac-redjoh-2026-11-13",
+  "title": "Dota 2: InterActive Philippines vs Red John (BO3) - European Pro League Group B",
+  "start_time": "2026-11-13T10:00:00Z",
+  "outcomes": [
+   "InterActive Philippines",
+   "Red John"
+  ],
+  "pandascore_match_id": 1807978,
+  "pandascore_name": "IAC vs Red John",
+  "pandascore_status": "running",
+  "teams": [
+   {
+    "name": "InterActive Philippines",
+    "acronym": "IAC",
+    "outcome": "InterActive Philippines"
+   },
+   {
+    "name": "Red John",
+    "acronym": null,
+    "outcome": "Red John"
+   }
+  ],
+  "match_score": 2.0,
+  "twitch_channel": "epldota_en2",
+  "streams": [
+   {
+    "url": "https://www.twitch.tv/ya4iller",
+    "main": false,
+    "language": "ru",
+    "channel": "ya4iller"
+   },
+   {
+    "url": "https://kick.com/epldota_en2",
+    "main": true,
+    "language": "en",
+    "channel": "epldota_en2"
+   }
+  ],
+  "updated": "2026-11-13T10:29:21.259Z"
+ }
+}
