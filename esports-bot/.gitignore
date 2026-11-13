@@ -5,3 +5,5 @@ data/*.log
 data/*.jsonl
 data/**/*.jsonl
 data/match_map.json
+data/debug*/
+data/logos/

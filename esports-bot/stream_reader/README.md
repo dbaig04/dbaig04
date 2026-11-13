@@ -49,6 +49,29 @@ the Twitch media-playlist URL (access token); the HLS polling is done in
   (every ~30 s, with fps/latency/CPU stats and `last_read`).
 * `left` = Radiant (left of clock), `right` = Dire.
 
+### Objective / economy events (added 2026-11-13)
+
+Every event line now also carries `gold_lead` (latest confirmed top-bar
+value, see below). New event types and fields:
+
+| event | fields | source / meaning |
+|---|---|---|
+| `gold_lead_change` | `gold_lead` (int gold, **+ = left/Radiant ahead**, - = right/Dire ahead, 0 = no indicator i.e. < ~1k), `gold_lead_prev`, `gold_lead_source: "topbar_k"` | yellow "▲ 12k" under the leading team's kill score. **1k resolution.** Confirmation: 3 consecutive frames for a 2-5k move, 6 for > 5k or the first value, 15 (~4 s) for a 1k step (hysteresis against flapping at a k boundary). |
+| `networth` | `gold_lead_exact` (int, same sign convention), `gold_lead`, `gold_lead_source: "networth_panel"` | exact team net-worth difference from the left "Net Worth" panel (sum of green rows - red rows), only when the panel is on screen (broadcasts rotate it), OCR'd rows are sorted, 2 consecutive reads agree and the value is within 1k of the top-bar lead. Emitted at most every 10 s, when it moved >= 1k. Sparse. |
+| `roshan` | `objective: "roshan"`, `benefits: "left"\|"right"\|null`, `feed_text` | kill-feed line "The Dire <icon> Roshan 135 each". Same line on 2 consecutive feed reads (~1 s apart); max one per side per 5 min. |
+| `tower_destroyed` | `objective`, `benefits`, `feed_text` | feed lines "<player> <icon> Tower 110 each" / "The Dire <icon> Tower". Side = "The Radiant/The Dire" text if present, else the team colour of the feed line (left-edge tint: green = Radiant, red = Dire). |
+| `barracks_destroyed` | `objective`, `benefits`, `feed_text` | feed "<player> <icon> Radiant Top Melee Barracks 155 each" (the *named* team lost it, so `benefits` is the other side). |
+
+`benefits` is in left/right terms (left = Radiant). `confidence` is 0.8 when
+the side is known, 0.6 when `benefits` is null. Two towers falling within
+10 s on the same side are reported once. The feed is OCR'd once per second, so
+objective events lag the kill/gold signals by ~1-2 s.
+
+Raw OCR'd feed lines are also appended to `data/feed_<channel>.log`
+(`stream_time  game_clock_s  tint  text`) for later analysis
+(`--no-feed-log` to disable). Debug frames for objective/gold events are the
+full top-left 1440x820 region.
+
 Debug crops (top strip with the three OCR boxes in red) go to `data/debug/`:
 one on every event, plus one every 120 s.
 
@@ -58,8 +81,8 @@ one on every event, plus one every 120 s.
    downloads each new segment, skips Twitch stitched-ad segments (EXTINF title
    != `live`), records (first video PTS, PDT) per segment and pipes the TS
    bytes into ffmpeg's stdin.
-2. ffmpeg (`-copyts`) selects ~fps frames, crops the top 7.5 % of the frame,
-   scales it to 1920x81 and prints `showinfo` (PTS) for each frame.
+2. ffmpeg (`-copyts`) selects ~fps frames, crops the top-left 1440x820 of the
+   (1080p) frame and prints `showinfo` (PTS) for each frame.
 3. `ocr.py` crops three fixed boxes (standard Dota 2 spectator top bar),
    thresholds bright text, upscales x4 and runs tesseract (`--psm 7`, digit
    whitelist). A box is only re-OCR'd when its binarised image changed.
@@ -82,4 +105,9 @@ one on every event, plus one every 120 s.
   Broadcaster encoder -> Twitch ingest is not observable.
 * Twitch access tokens expire; on HTTP 403/404 the fetcher re-resolves the URL.
 * Team names are not OCR'd (logos); pass `--left-team/--right-team`.
-* Only kills + clock; towers/Roshan/net worth not implemented.
+* Tower/Roshan detection depends on the kill feed being visible (bottom-left,
+  above the minimap) and OCR of a busy region; it can miss events when the
+  feed is covered or the map behind it is bright, and towers killed by creeps
+  without a feed line are not seen. Which tower (tier/lane) is not parsed.
+* `gold_lead_change` has 1k resolution and is noisy in big fights (it really
+  does swing); smooth on the consumer side if needed.

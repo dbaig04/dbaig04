@@ -27,7 +27,10 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hls import HLSFetcher  # noqa: E402
-from ocr import ScoreboardOCR, STRIP_W, STRIP_H, STRIP_FRAC  # noqa: E402
+from ocr import ScoreboardOCR  # noqa: E402
+from signals import SignalTracker  # noqa: E402
+
+FRAME_W, FRAME_H = 1440, 820  # top-left region of the 1080p frame fed to the readers
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DATA = os.path.join(ROOT, "data")
@@ -152,6 +155,64 @@ class Tracker:
         self.end_flagged = False
 
 
+LOGO_BOXES = {"left": (472, 0, 540, 44), "right": (1372, 0, 1440, 44)}
+
+
+def logo_crop(frame, side):
+    x0, y0, x1, y1 = LOGO_BOXES[side]
+    return cv2.cvtColor(np.ascontiguousarray(frame[y0:y1, x0:x1]), cv2.COLOR_BGR2GRAY)
+
+
+def logo_sim(a, b):
+    if a is None or b is None or a.shape != b.shape:
+        return -1.0
+    return float(cv2.matchTemplate(a.astype(np.float32), b.astype(np.float32), cv2.TM_CCOEFF_NORMED)[0, 0])
+
+
+class SideKeeper:
+    """Keeps left/right team names correct across games: the top-bar logo
+    crops of each team are stored (data/logos/) the first time a game is
+    locked with known names; at each later clock_start the current logos are
+    compared with the stored ones and the names are swapped if the teams
+    switched sides."""
+
+    def __init__(self, channel, left, right):
+        self.dir = os.path.join(DATA, "logos")
+        os.makedirs(self.dir, exist_ok=True)
+        self.channel = channel
+        self.teams = [left, right]
+        self.ref = {}
+        for t in (left, right):
+            if t:
+                im = cv2.imread(self._path(t), cv2.IMREAD_GRAYSCALE)
+                if im is not None:
+                    self.ref[t] = im
+
+    def _path(self, team):
+        return os.path.join(self.dir, f"{self.channel}_{re.sub(r'[^A-Za-z0-9]+', '_', team)}.png")
+
+    def on_lock(self, frame):
+        """Returns True if sides were swapped."""
+        L, R = self.teams
+        if not (L and R):
+            return False
+        cl, cr = logo_crop(frame, "left"), logo_crop(frame, "right")
+        swapped = False
+        if L in self.ref and R in self.ref:
+            same = logo_sim(cl, self.ref[L]) + logo_sim(cr, self.ref[R])
+            swap = logo_sim(cl, self.ref[R]) + logo_sim(cr, self.ref[L])
+            log.info("logo check same=%.2f swap=%.2f", same, swap)
+            if swap > same + 0.3:
+                self.teams = [R, L]
+                swapped = True
+        L, R = self.teams
+        for t, im in ((L, cl), (R, cr)):
+            if t not in self.ref:
+                self.ref[t] = im
+                cv2.imwrite(self._path(t), im)
+        return swapped
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--channel", required=True)
@@ -165,6 +226,8 @@ def main():
     ap.add_argument("--left-team", default=None, help="name/tag of the Radiant (left) team")
     ap.add_argument("--right-team", default=None, help="name/tag of the Dire (right) team")
     ap.add_argument("--ocr-teams", action="store_true", help="best-effort OCR of team names (unreliable)")
+    ap.add_argument("--no-feed-log", dest="feed_log", action="store_false",
+                    help="do not write OCR'd kill-feed lines to data/feed_<channel>.log")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -178,7 +241,7 @@ def main():
     stop = threading.Event()
     interval = max(0.05, 1.0 / args.fps - 0.01)
     vf = (f"select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,{interval:.3f})',"
-          f"crop=iw:ih*{STRIP_FRAC}:0:0,scale={STRIP_W}:{STRIP_H},showinfo")
+          f"crop=iw*0.75:ih*{FRAME_H / 1080:.4f}:0:0,scale={FRAME_W}:{FRAME_H},showinfo")
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "info", "-nostats",
            "-fflags", "nobuffer", "-copyts", "-f", "mpegts", "-i", "pipe:0",
            "-an", "-vf", vf, "-fps_mode", "passthrough",
@@ -203,7 +266,9 @@ def main():
 
     ocr = ScoreboardOCR()
     tr = Tracker(confirm=args.confirm)
-    frame_bytes = STRIP_W * STRIP_H * 3
+    frame_bytes = FRAME_W * FRAME_H * 3
+    sig = SignalTracker(feed_log=os.path.join(DATA, f"feed_{args.channel}.log") if args.feed_log else None,
+                        debug_dir=args.debug_dir, tag=args.channel)
     t_start = time.time()
     last_hb = 0
     last_dbg = 0
@@ -211,7 +276,8 @@ def main():
     n_usable = 0
     lat_hist = []
     ocr_ms = []
-    teams = (args.left_team, args.right_team)
+    sides = SideKeeper(args.channel, args.left_team, args.right_team)
+    teams = tuple(sides.teams)
     last_team_t = 0
     last_read = None
     cpu0 = resource.getrusage(resource.RUSAGE_SELF)
@@ -239,7 +305,8 @@ def main():
             if pdt is not None:
                 lat_hist.append(recv - pdt)
                 lat_hist = lat_hist[-240:]
-            img = np.frombuffer(buf, np.uint8).reshape(STRIP_H, STRIP_W, 3)
+            frame = np.frombuffer(buf, np.uint8).reshape(FRAME_H, FRAME_W, 3)
+            img = frame[0:81]  # top strip
             n_frames += 1
             t0 = time.time()
             l, r, c, raw = ocr.read(img)
@@ -254,18 +321,30 @@ def main():
             log.debug("frame pts=%s lat=%s read=%s raw=%s", pts,
                       None if pdt is None else round(recv - pdt, 2), last_read, raw)
             tstream = pdt if pdt is not None else recv
-            for ev, conf in tr.update(tstream, l, r, c):
+            evs = [(ev, conf, {}) for ev, conf in tr.update(tstream, l, r, c)]
+            if any(e[0] == "clock_start" for e in evs):
+                if sides.on_lock(frame):
+                    log.info("teams switched sides: left=%s right=%s", *sides.teams)
+                    evs = [(e, cf, {"sides_swapped": True} if e == "clock_start" else x) for e, cf, x in evs]
+                teams = tuple(sides.teams)
+            hud_ok = tr.locked and c is not None and l is not None and r is not None and \
+                tr.clock is not None and abs(c - tr.clock) <= 1
+            evs += sig.update(frame, tstream, hud_ok, tr.clock)
+            for ev, conf, extra in evs:
                 rec = {"ts_utc": iso(recv), "channel": args.channel,
                        "game_clock": fmt_clock(tr.clock),
                        "left_kills": tr.L, "right_kills": tr.R,
                        "left_team": teams[0], "right_team": teams[1],
                        "event": ev, "confidence": round(conf, 2),
+                       "gold_lead": sig.gold_lead,
                        "stream_pdt_utc": iso(pdt) if pdt else None,
                        "latency_s": round(recv - pdt, 2) if pdt else None}
+                rec.update(extra)
                 emit(rec)
                 log.info("EVENT %s", rec)
                 fn = os.path.join(args.debug_dir, f"{args.channel}_{ev}_{recv:.0f}_{tr.L}-{tr.R}_{fmt_clock(tr.clock)}.png".replace(":", "m"))
-                cv2.imwrite(fn, ocr.annotate(img))
+                cv2.imwrite(fn, ocr.annotate(img) if ev in ("kill_change", "clock_start", "game_end_suspect")
+                            else frame)
             if recv - last_dbg > args.debug_every:
                 last_dbg = recv
                 cv2.imwrite(os.path.join(args.debug_dir, f"{args.channel}_strip_{recv:.0f}.png"), ocr.annotate(img))
@@ -284,7 +363,7 @@ def main():
                 ls = sorted(lat_hist)
                 rec = {"ts_utc": iso(recv), "channel": args.channel, "event": "heartbeat",
                        "game_clock": fmt_clock(tr.clock), "left_kills": tr.L, "right_kills": tr.R,
-                       "left_team": teams[0], "right_team": teams[1], "confidence": None,
+                       "gold_lead": sig.gold_lead, "left_team": teams[0], "right_team": teams[1], "confidence": None,
                        "locked": tr.locked, "last_read": last_read,
                        "frames": n_frames, "usable_frames": n_usable,
                        "latency_s_median": round(ls[len(ls) // 2], 2) if ls else None,
