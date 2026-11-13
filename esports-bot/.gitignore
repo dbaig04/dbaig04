@@ -3,3 +3,5 @@ __pycache__/
 data/debug/
 data/*.log
 data/*.jsonl
+data/**/*.jsonl
+data/match_map.json

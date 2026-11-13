@@ -109,8 +109,9 @@ def segment_games(rows):
     for r in rows:
         new = False
         if last is not None:
-            if r.get("event") == "clock_start" and cur:
-                new = True
+            if (r.get("event") == "clock_start" and cur and r["clock"] is not None and r["clock"] < 180
+                    and last["clock"] is not None and last["clock"] > r["clock"] + 60):
+                new = True  # a genuine new game (not a re-lock mid-game)
             elif r["clock"] is not None and last["clock"] is not None and r["clock"] < last["clock"] - 120:
                 new = True
             elif (r["L"] is not None and last["L"] is not None and
@@ -151,6 +152,10 @@ def load_stream(path, min_conf):
 
 
 def detect_big(seg, kills=3, window=20.0, net=2, cooldown=30.0):
+    if kills <= 1:  # every single kill change counts as an event
+        rows = [r for r in seg if r["L"] is not None and r["R"] is not None]
+        return [(b, "L" if b["L"] - a["L"] > b["R"] - a["R"] else "R", b["L"] - a["L"], b["R"] - a["R"])
+                for a, b in zip(rows, rows[1:]) if (b["L"] - a["L"]) != (b["R"] - a["R"])]
     """Return [(row, side 'L'|'R', dL, dR)] where one side got >=kills within `window` s of game clock."""
     rows = [r for r in seg if r["L"] is not None and r["R"] is not None]
     out, block_until, j = [], None, 0
