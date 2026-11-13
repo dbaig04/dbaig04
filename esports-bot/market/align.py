@@ -28,9 +28,10 @@ class Series:
     """As-of lookup on a per-token 1 s price series."""
 
     def __init__(self):
-        self.ts, self.bid, self.ask, self.mid = [], [], [], []
+        self.ts, self.bid, self.ask, self.mid, self.ask_size = [], [], [], [], []
 
-    def add(self, t, bid, ask, mid):
+    def add(self, t, bid, ask, mid, ask_size=None):
+        self.ask_size.append(ask_size)
         self.ts.append(t)
         self.bid.append(bid)
         self.ask.append(ask)
@@ -38,7 +39,7 @@ class Series:
 
     def finish(self):
         order = sorted(range(len(self.ts)), key=self.ts.__getitem__)
-        for name in ("ts", "bid", "ask", "mid"):
+        for name in ("ts", "bid", "ask", "mid", "ask_size"):
             arr = getattr(self, name)
             setattr(self, name, [arr[i] for i in order])
 
@@ -74,7 +75,7 @@ def load_prices(path, slugs=None):
             # a one-sided / 1c-99c book carries no information
             if bid is None or ask is None or ask - bid > 0.2:
                 mid = None
-            series[(r["event_slug"], r["market_type"], r.get("game"), r["outcome"])].add(t, bid, ask, mid)
+            series[(r["event_slug"], r["market_type"], r.get("game"), r["outcome"])].add(t, bid, ask, mid, r.get("ask_size"))
             if r["outcome_index"] == 0 and r["market_type"] == "moneyline":
                 games[r["event_slug"]].append((t, r.get("current_game"), tuple(r["outcomes"])))
     for s in series.values():

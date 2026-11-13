@@ -155,18 +155,22 @@ class Tracker:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--channel", required=True)
-    ap.add_argument("--fps", type=float, default=2.0)
-    ap.add_argument("--quality", default="720p60", help="Twitch quality; falls back to 720p/best")
+    ap.add_argument("--fps", type=float, default=4.0)
+    ap.add_argument("--quality", default="best", help="Twitch quality (best=1080p60 source); falls back to 720p60/720p")
     ap.add_argument("--out", default=os.path.join(DATA, "stream_events.jsonl"))
     ap.add_argument("--debug-dir", default=os.path.join(DATA, "debug"))
     ap.add_argument("--debug-every", type=float, default=120, help="save a strip every N s")
     ap.add_argument("--confirm", type=int, default=2, help="consecutive frames to confirm a change")
     ap.add_argument("--duration", type=float, default=0, help="stop after N seconds (0 = forever)")
+    ap.add_argument("--left-team", default=None, help="name/tag of the Radiant (left) team")
+    ap.add_argument("--right-team", default=None, help="name/tag of the Dire (right) team")
+    ap.add_argument("--ocr-teams", action="store_true", help="best-effort OCR of team names (unreliable)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
-                        format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    if args.verbose:
+        log.setLevel(logging.DEBUG)
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     os.makedirs(args.debug_dir, exist_ok=True)
     out = open(args.out, "a", buffering=1)
@@ -207,7 +211,7 @@ def main():
     n_usable = 0
     lat_hist = []
     ocr_ms = []
-    teams = (None, None)
+    teams = (args.left_team, args.right_team)
     last_team_t = 0
     last_read = None
     cpu0 = resource.getrusage(resource.RUSAGE_SELF)
@@ -239,7 +243,7 @@ def main():
             n_frames += 1
             t0 = time.time()
             l, r, c, raw = ocr.read(img)
-            if time.time() - last_team_t > 60 and c is not None:
+            if args.ocr_teams and time.time() - last_team_t > 60 and c is not None:
                 teams = ocr.read_teams(img)
                 last_team_t = time.time()
             ocr_ms.append((time.time() - t0) * 1000)
@@ -269,7 +273,9 @@ def main():
                 last_hb = recv
                 cpu1 = resource.getrusage(resource.RUSAGE_SELF)
                 el = recv - t_start
-                cpu_py = (cpu1.ru_utime + cpu1.ru_stime - cpu0.ru_utime - cpu0.ru_stime) / max(el, 1)
+                cpu1c = resource.getrusage(resource.RUSAGE_CHILDREN)  # reaped tesseract runs
+                cpu_py = (cpu1.ru_utime + cpu1.ru_stime - cpu0.ru_utime - cpu0.ru_stime
+                          + cpu1c.ru_utime + cpu1c.ru_stime - cpu0c.ru_utime - cpu0c.ru_stime) / max(el, 1)
                 try:  # ffmpeg CPU (still running, so read /proc)
                     st = open(f"/proc/{ff.pid}/stat").read().split()
                     cpu_ff = (int(st[13]) + int(st[14])) / os.sysconf("SC_CLK_TCK") / max(el, 1)
@@ -285,7 +291,7 @@ def main():
                        "latency_s_max": round(ls[-1], 2) if ls else None,
                        "playlist_lag_s": round(fetcher.playlist_lag, 2) if fetcher.playlist_lag else None,
                        "ocr_ms_median": round(sorted(ocr_ms)[len(ocr_ms) // 2], 1) if ocr_ms else None,
-                       "cpu_cores_python": round(cpu_py, 3),
+                       "cpu_cores_python_ocr": round(cpu_py, 3),
                        "cpu_cores_ffmpeg": round(cpu_ff, 3) if cpu_ff is not None else None,
                        "ad_segments_skipped": fetcher.ad_segments}
                 emit(rec)
